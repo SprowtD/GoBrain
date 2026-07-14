@@ -127,11 +127,37 @@ func runMint(dbPath string) {
 	fmt.Println("store this now — it is not recoverable.")
 }
 
-// bootstrapAdmin mints a first admin token from BOOTSTRAP_ADMIN_LABEL on first
-// boot (when no admin exists yet), logging the secret once. No-op if the env var
-// is unset or an admin already exists, so it's safe to leave set across redeploys.
+// bootstrapAdmin provisions a first admin token from env so a template deployer
+// doesn't need a manual `mint`. Two modes:
+//
+//   - BOOTSTRAP_ADMIN_TOKEN (preferred): install this exact secret as an admin.
+//     Idempotent, works even if another admin exists, and needs no log-scraping
+//     since the operator already knows the value.
+//   - BOOTSTRAP_ADMIN_LABEL (fallback): mint a random admin the FIRST time only
+//     (when no admin exists) and print it once to the logs.
+//
+// No-op if neither is set.
 func bootstrapAdmin() {
 	label := os.Getenv("BOOTSTRAP_ADMIN_LABEL")
+
+	if raw := os.Getenv("BOOTSTRAP_ADMIN_TOKEN"); raw != "" {
+		l := label
+		if l == "" {
+			l = "bootstrap-admin"
+		}
+		created, err := store.EnsureAdminToken(l, raw)
+		if err != nil {
+			log.Printf("bootstrap: ensure admin token failed: %v", err)
+			return
+		}
+		if created {
+			log.Printf("bootstrap: installed admin token from BOOTSTRAP_ADMIN_TOKEN (label %q)", l)
+		} else {
+			log.Printf("bootstrap: BOOTSTRAP_ADMIN_TOKEN already installed — using existing")
+		}
+		return
+	}
+
 	if label == "" {
 		return
 	}
@@ -141,6 +167,7 @@ func bootstrapAdmin() {
 		return
 	}
 	if exists {
+		log.Printf("bootstrap: an admin token already exists — skipping mint (set BOOTSTRAP_ADMIN_TOKEN to install a known one)")
 		return
 	}
 	_, raw, err := store.CreateToken(label, store.RoleAdmin)
@@ -149,7 +176,7 @@ func bootstrapAdmin() {
 		return
 	}
 	log.Printf("bootstrap: minted admin token (%s): %s", label, raw)
-	log.Printf("bootstrap: store this now — it is not shown again. Unset BOOTSTRAP_ADMIN_LABEL after first boot.")
+	log.Printf("bootstrap: store this now — it is not shown again.")
 }
 
 // resolveBackendURL uses BACKEND_URL if set, otherwise Railway's auto-provided

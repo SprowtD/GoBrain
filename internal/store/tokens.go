@@ -84,6 +84,33 @@ func ListTokens() ([]Token, error) {
 	return tokens, rows.Err()
 }
 
+// EnsureAdminToken installs an admin token with a caller-supplied secret if one
+// with that secret isn't already present. Lets an operator set a known token via
+// env (no log-scraping, works even if another admin already exists). Returns
+// whether it created a new row.
+func EnsureAdminToken(label, rawToken string) (created bool, err error) {
+	var n int
+	if err = db.QueryRow(
+		`SELECT COUNT(*) FROM tokens WHERE token_hash = ?`, hashToken(rawToken),
+	).Scan(&n); err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	id, err := genID()
+	if err != nil {
+		return false, err
+	}
+	if _, err = db.Exec(
+		`INSERT INTO tokens (id, label, token_hash, role) VALUES (?, ?, ?, ?)`,
+		id, label, hashToken(rawToken), RoleAdmin,
+	); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // HasAdminToken reports whether any non-revoked admin token exists. Used by the
 // first-boot bootstrap to decide whether to mint one.
 func HasAdminToken() (bool, error) {

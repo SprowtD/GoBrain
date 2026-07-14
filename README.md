@@ -72,8 +72,8 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 1. **New Project → Deploy from GitHub repo** — Railway reads `railway.json` automatically.
 2. **Add a Volume** mounted at **`/data`** — holds the SQLite DB + vault so they survive redeploys.
 3. **Generate a domain** (Settings → Networking) — `BACKEND_URL` auto-derives from it.
-4. **Set `OPENROUTER_API_KEY`** (and optionally `BOOTSTRAP_ADMIN_LABEL` to auto-mint an admin token into the logs on first boot).
-5. Redeploy → the admin token is in the deploy logs (or run `/server mint "owner"` in a shell).
+4. **Set `OPENROUTER_API_KEY`**, and set **`BOOTSTRAP_ADMIN_TOKEN`** to a secret you generate (`openssl rand -hex 32`) — that becomes your admin token, no log-scraping needed.
+5. Redeploy → use your `BOOTSTRAP_ADMIN_TOKEN` as the admin bearer token. (Alternatively set `BOOTSTRAP_ADMIN_LABEL` to have a random one printed to the deploy logs on first boot.)
 
 > **Run a single instance (1 replica).** The single-writer vault + one volume must not be horizontally scaled.
 
@@ -107,7 +107,8 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `VAULT_PATH`                | `/data/vault`                  | Markdown output root                                            |
 | `PORT`                      | `8080`                         | listen port (Railway injects this)                              |
 | `BACKEND_URL`               | *(auto)*                       | only for invite join-links; derives from `RAILWAY_PUBLIC_DOMAIN` |
-| `BOOTSTRAP_ADMIN_LABEL`     | —                              | first-boot only: auto-mint an admin token to the logs           |
+| `BOOTSTRAP_ADMIN_TOKEN`     | —                              | install a chosen secret as the admin token (`openssl rand -hex 32`); use it directly, no log-scraping |
+| `BOOTSTRAP_ADMIN_LABEL`     | —                              | alt: auto-mint a random admin to the logs on first boot         |
 | `OPENROUTER_API_KEY`        | —                              | enables chunking, vision & semantic search; unset → offline/keyword fallback |
 | `OPENROUTER_MODEL`          | `openai/gpt-4o-mini`           | text chunking model                                             |
 | `OPENROUTER_VISION_MODEL`   | `openai/gpt-4o-mini`           | vision model for `image` OCR                                    |

@@ -10,7 +10,8 @@ FROM alpine:3.20
 # git: vault push. yt-dlp: youtube transcript extraction (pulls python3).
 RUN apk add --no-cache ca-certificates git yt-dlp
 COPY --from=build /server /server
-# Railway mounts a persistent volume at /data (DB_PATH + VAULT_PATH live here).
-VOLUME ["/data"]
+# Persistence is a Railway Volume mounted at /data (DB_PATH + VAULT_PATH live
+# there) — attach it on the service. Railway rejects the Docker VOLUME
+# instruction, so it must NOT be declared here.
 EXPOSE 8080
 ENTRYPOINT ["/server"]

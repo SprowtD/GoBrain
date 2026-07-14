@@ -216,17 +216,22 @@ func push() {
 	}
 }
 
-// ensureRepo makes rootPath a git repo on first boot and wires up the remote.
+// ensureRepo makes rootPath a git repo on first boot and reconciles the remote
+// on EVERY boot — so setting VAULT_REPO_URL on a vault that's already a git repo
+// (e.g. an existing Railway volume) actually wires up the push target instead of
+// being silently skipped.
 func ensureRepo() error {
-	if _, err := os.Stat(filepath.Join(rootPath, ".git")); err == nil {
-		return nil // already initialized
-	}
-	if err := runGit("init", "-b", "main"); err != nil {
-		return err
+	if _, err := os.Stat(filepath.Join(rootPath, ".git")); err != nil {
+		if err := runGit("init", "-b", "main"); err != nil {
+			return err
+		}
 	}
 	if remoteURL != "" {
-		if err := runGit("remote", "add", "origin", remoteURL); err != nil {
-			log.Printf("vault: add remote failed: %v", err)
+		// set-url updates an existing origin; if there is none yet, add it.
+		if err := runGit("remote", "set-url", "origin", remoteURL); err != nil {
+			if err := runGit("remote", "add", "origin", remoteURL); err != nil {
+				log.Printf("vault: set remote failed: %v", err)
+			}
 		}
 	}
 	return nil

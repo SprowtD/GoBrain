@@ -22,6 +22,11 @@ import (
 )
 
 func main() {
+	// Log to stdout, not the default stderr. Platforms like Railway classify
+	// every stderr line as "error" severity, which would paint normal startup
+	// logs red. Fatal errors still surface via the non-zero exit + healthcheck.
+	log.SetOutput(os.Stdout)
+
 	// Load a local .env if present. No-ops in production (Railway) where the
 	// env vars are set directly and no .env file exists — hence the ignored error.
 	_ = godotenv.Load()

@@ -16,7 +16,7 @@
 
 - **Ingests four source kinds** — articles (Readability), YouTube (yt-dlp captions → transcript), images (vision OCR, source image stored & embedded), and raw thoughts — on a bounded worker pool.
 - **Files everything as [OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) Markdown** into a git-backed vault: YAML frontmatter, auto-generated `index.md` per directory, and per-tag hub pages for an Obsidian-navigable graph.
-- **Semantic search + related notes** — every note is embedded (via OpenRouter); `/v1/search` ranks by meaning and `/v1/related` surfaces nearest neighbours. Falls back to keyword search when no key is set, so it works either way.
+- **Semantic search + related notes** — every note is embedded (via OpenRouter); `/v1/search` ranks by meaning, `/v1/related` surfaces nearest neighbours, and each note gets an auto-generated `[[related]]` link block (Obsidian-navigable). Falls back to keyword search when no key is set, so it works either way.
 - **Shared with agents over MCP** — a stdio server lets Claude Code, Cursor, and friends read/write the same vault, so a team on different harnesses contributes to one brain.
 - **Durable by design** — a single-writer goroutine owns all disk + git mutations (atomic writes, debounced commits, `rebase`-before-push, crash-recovery commit on boot).
 
@@ -88,6 +88,7 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 | GET    | `/v1/status`      | member | 50 most recent jobs                       |
 | POST   | `/v1/notes`       | member | write a structured note                   |
 | GET    | `/v1/notes/*`     | member | read a note by vault path                 |
+| DELETE | `/v1/notes/*`     | member | delete a note (recoverable from git history) |
 | GET    | `/v1/search?q=`   | member | **semantic** search (keyword fallback)    |
 | GET    | `/v1/related?path=` | member | notes nearest to a given note           |
 | POST   | `/v1/tokens`      | admin  | mint a token (`{label, role?}`) + join link |
@@ -112,6 +113,7 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `OPENROUTER_MODEL`          | `openai/gpt-4o-mini`           | text chunking model                                             |
 | `OPENROUTER_VISION_MODEL`   | `openai/gpt-4o-mini`           | vision model for `image` OCR                                    |
 | `OPENROUTER_EMBEDDING_MODEL`| `qwen/qwen3-embedding-8b`      | embeddings for semantic search + related notes                 |
+| `RELATED_LINKS`             | `true`                         | auto-inject `[[related]]` blocks into notes; set `false` to disable body edits |
 | `OPENROUTER_BASE_URL`       | `https://openrouter.ai/api/v1` | override for a proxy/self-host                                  |
 | `VAULT_REPO_URL`            | —                              | git remote for the vault; unset → commits stay local           |
 | `GIT_SSH_KEY`               | —                              | private deploy key for pushing to the remote                   |
@@ -121,7 +123,7 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 
 `cmd/mcp` is a stdio [MCP](https://modelcontextprotocol.io) server: a thin, token-authed client over the backend so any MCP-capable agent contributes to one vault with consistent OKF structure, indexes, and git.
 
-**Tools:** `search_vault` · `read_note` · `related_notes` · `write_note` · `project_index`
+**Tools:** `search_vault` · `read_note` · `related_notes` · `write_note` · `delete_note` · `project_index`
 
 ```bash
 go build -o secondbrain-mcp ./cmd/mcp

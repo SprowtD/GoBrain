@@ -148,6 +148,11 @@ func toolDefs() []map[string]any {
 			"inputSchema": obj(map[string]any{"path": strProp("Vault-relative path of the note to find neighbours for")}, "path"),
 		},
 		{
+			"name":        "delete_note",
+			"description": "Delete a note from the vault by its path. The vault is git-backed, so deletions are recoverable from history. Use sparingly.",
+			"inputSchema": obj(map[string]any{"path": strProp("Vault-relative path of the note to delete")}, "path"),
+		},
+		{
 			"name":        "write_note",
 			"description": "Write a structured note into the vault (design idea, decision, code snippet, session memory), grouped under a project. Use this to share knowledge with the team's other agents.",
 			"inputSchema": obj(map[string]any{
@@ -215,6 +220,16 @@ func runTool(name string, args json.RawMessage) (string, error) {
 			return "", fmt.Errorf("path is required")
 		}
 		return doRelated(a.Path)
+
+	case "delete_note":
+		var a struct {
+			Path string `json:"path"`
+		}
+		json.Unmarshal(args, &a)
+		if a.Path == "" {
+			return "", fmt.Errorf("path is required")
+		}
+		return doDelete(a.Path)
 
 	case "write_note":
 		var a struct {
@@ -330,6 +345,20 @@ func doWrite(title, body, kind, project string, tags []string) (string, error) {
 	return "Wrote note: " + r.Path, nil
 }
 
+func doDelete(path string) (string, error) {
+	body, code, err := apiDelete("/v1/notes/" + path)
+	if err != nil {
+		return "", err
+	}
+	if code == http.StatusNotFound {
+		return "Not found: " + path, nil
+	}
+	if code != http.StatusNoContent && code != http.StatusOK {
+		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
+	}
+	return "Deleted note: " + path, nil
+}
+
 // --- HTTP helpers ---
 
 func apiGet(path string) ([]byte, int, error) {
@@ -349,6 +378,15 @@ func apiPost(path string, payload any) ([]byte, int, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	return do(req)
+}
+
+func apiDelete(path string) ([]byte, int, error) {
+	req, err := http.NewRequest(http.MethodDelete, backendURL+path, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	return do(req)
 }
 

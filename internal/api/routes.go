@@ -30,6 +30,7 @@ func NewRouter(jobQueue chan<- store.Job, backendURL string) *chi.Mux {
 		// Direct note read/write/search — the surface the MCP server wraps.
 		r.Post("/notes", WriteNoteHandler)
 		r.Get("/notes/*", ReadNoteHandler)
+		r.Delete("/notes/*", DeleteNoteHandler)
 		r.Get("/search", SearchNotesHandler)
 		r.Get("/related", RelatedNotesHandler)
 

@@ -10,7 +10,9 @@ import (
 	"encoding/hex"
 	"log"
 	"math"
+	"os"
 	"sort"
+	"strings"
 	"sync"
 
 	"secondbrain-server/internal/llm"
@@ -18,22 +20,41 @@ import (
 	"secondbrain-server/internal/vault"
 )
 
-// maxEmbedRunes caps how much of a note we send to the embedding model. Notes
-// are windowed to ~18k runes at ingest; embedding models have a token ceiling,
-// so we truncate to a safe leading slice.
-const maxEmbedRunes = 8000
+const (
+	// maxEmbedRunes caps how much of a note we send to the embedding model. Notes
+	// are windowed to ~18k runes at ingest; embedding models have a token
+	// ceiling, so we truncate to a safe leading slice.
+	maxEmbedRunes = 8000
+	// relatedCount / relatedMinScore bound the auto-generated Related block:
+	// at most N links, and only neighbours above this cosine similarity (below
+	// it, notes aren't meaningfully related — avoids linking everything).
+	relatedCount    = 5
+	relatedMinScore = 0.4
+)
 
 var (
-	client   *llm.Client
-	enabled  bool
-	reindex  sync.Mutex // serialize reconciles so two never race the same rows
+	client       *llm.Client
+	enabled      bool
+	relatedLinks bool
+	reindex      sync.Mutex // serialize reconciles so two never race the same rows
 )
 
 // Init wires the embedding client. Semantic features are enabled only when the
 // client has an API key; otherwise every call degrades to keyword search.
+// Auto-injected [[related]] links default on (with embeddings) — set
+// RELATED_LINKS=false to disable body mutation.
 func Init(c *llm.Client) {
 	client = c
 	enabled = c != nil && c.Available()
+	relatedLinks = enabled && !isFalse(os.Getenv("RELATED_LINKS"))
+}
+
+func isFalse(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "false", "0", "no", "off":
+		return true
+	}
+	return false
 }
 
 // Enabled reports whether semantic search is active.
@@ -62,7 +83,10 @@ func Reconcile(ctx context.Context) error {
 	var embedded int
 	for _, n := range notes {
 		seen[n.Path] = true
-		h := hashText(n.Text)
+		// Hash/embed the note WITHOUT its managed Related block, so regenerating
+		// that block never counts as a content change (which would re-embed
+		// endlessly). embedInput strips it too.
+		h := hashText(vault.StripManagedBlock(n.Text))
 		if have[n.Path] == h {
 			continue // unchanged since last index
 		}
@@ -92,7 +116,55 @@ func Reconcile(ctx context.Context) error {
 	if embedded > 0 {
 		log.Printf("index: embedded %d note(s), %d indexed total", embedded, len(seen))
 	}
+
+	// Regenerate the auto [[related]] blocks. Runs after embeddings are current;
+	// writes only the notes whose block actually changed, so it converges (no
+	// commit loop). Any writes here trigger one more commit → reconcile, which
+	// then finds every block already correct and writes nothing.
+	if relatedLinks {
+		writeRelatedBlocks(notes)
+	}
 	return nil
+}
+
+// writeRelatedBlocks refreshes each note's machine-managed Related section from
+// its nearest neighbours (above relatedMinScore).
+func writeRelatedBlocks(notes []vault.Note) {
+	embs, err := store.ListEmbeddings()
+	if err != nil || len(embs) == 0 {
+		return
+	}
+	byPath := make(map[string][]float32, len(embs))
+	for _, e := range embs {
+		byPath[e.RelPath] = e.Vec
+	}
+
+	var wrote int
+	for _, n := range notes {
+		vec := byPath[n.Path]
+		if vec == nil {
+			continue // not embedded yet
+		}
+		var items []vault.RelatedItem
+		for _, s := range rank(vec, embs, n.Path, relatedCount) {
+			if s.score < relatedMinScore {
+				continue
+			}
+			title, _ := vault.NoteTitle(s.path)
+			items = append(items, vault.RelatedItem{Path: s.path, Title: title})
+		}
+		changed, err := vault.SetRelated(n.Path, items)
+		if err != nil {
+			log.Printf("index: related block %s failed: %v", n.Path, err)
+			continue
+		}
+		if changed {
+			wrote++
+		}
+	}
+	if wrote > 0 {
+		log.Printf("index: updated related links on %d note(s)", wrote)
+	}
 }
 
 // Search ranks notes by semantic similarity to the query, falling back to vault
@@ -230,8 +302,9 @@ func normalize(v []float32) {
 // --- helpers ---
 
 func embedInput(n vault.Note) string {
-	// Lead with the title so short notes still carry topical signal.
-	return truncate(n.Title + "\n\n" + n.Text)
+	// Lead with the title so short notes still carry topical signal; strip the
+	// managed Related block so link churn never changes the embedding input.
+	return truncate(n.Title + "\n\n" + vault.StripManagedBlock(n.Text))
 }
 
 func truncate(s string) string {

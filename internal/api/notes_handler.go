@@ -72,6 +72,21 @@ func ReadNoteHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(readNoteResponse{Path: rel, Content: content})
 }
 
+// DeleteNoteHandler removes a note by vault path. The vault is git-backed, so a
+// mistaken delete is recoverable from history.
+func DeleteNoteHandler(w http.ResponseWriter, r *http.Request) {
+	rel := chi.URLParam(r, "*")
+	if err := vault.DeleteNote(rel); err != nil {
+		if errors.Is(err, vault.ErrNotFound) {
+			http.Error(w, "note not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func SearchNotesHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {

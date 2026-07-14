@@ -13,10 +13,12 @@ import (
 	"time"
 )
 
-// WriteRequest is a single Markdown file to persist into the vault.
+// WriteRequest is a single Markdown file to persist into (or, with Delete,
+// remove from) the vault. All mutations go through the single writer.
 type WriteRequest struct {
 	RelPath string // e.g. "youtube/<job-id>-00.md"
 	Content string
+	Delete  bool       // remove RelPath instead of writing Content
 	Done    chan error // optional: writer sends the persist result when non-nil
 }
 
@@ -84,6 +86,25 @@ func WriteSync(req WriteRequest) error {
 	return <-done
 }
 
+// DeleteNote removes a note by vault-relative path, routed through the single
+// writer so it's serialized with writes and picked up by the next commit (whose
+// reconcile then prunes the note's embedding). Returns ErrNotFound if absent.
+func DeleteNote(rel string) error {
+	full, err := safeJoin(rel)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(full); err != nil {
+		if os.IsNotExist(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	done := make(chan error, 1)
+	writeCh <- WriteRequest{RelPath: rel, Delete: true, Done: done}
+	return <-done
+}
+
 func writer() {
 	// Debounce git commits: keep persisting files as they arrive, and only
 	// commit once writes go quiet for `debounce`.
@@ -120,6 +141,13 @@ func writer() {
 
 func persist(req WriteRequest) error {
 	full := filepath.Join(rootPath, req.RelPath)
+	if req.Delete {
+		// Already-gone is success (idempotent delete).
+		if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}

@@ -4,8 +4,7 @@
 
 **A self-hostable "second brain" backend.** Feed it YouTube links, articles, images, or raw thoughts — it runs an extract → chunk → enrich pipeline and files the results as clean Markdown into a **git-backed, semantically searchable vault** that any agent can read and write through MCP.
 
-<!-- Publish your Railway template (see “Deploy to Railway” below) and replace <TEMPLATE_CODE>: -->
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/<TEMPLATE_CODE>)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw)
 
 `Go 1.23` · `SQLite (pure-Go, no CGO)` · `OpenRouter` · `MCP` · single static binary
 
@@ -77,7 +76,7 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 
 > **Run a single instance (1 replica).** The single-writer vault + one volume must not be horizontally scaled.
 
-**One-click button:** deploy once, then **Create Template from Project** in Railway, publish it, and drop your template code into the `Deploy on Railway` badge at the top.
+**One-click:** the [**Deploy on Railway**](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw) button at the top spins up a private instance — volume, healthcheck, and a generated admin token included. The deployer only supplies their own `OPENROUTER_API_KEY`.
 
 ## Routes
 

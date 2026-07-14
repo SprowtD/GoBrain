@@ -110,7 +110,14 @@ func buildImage(ctx context.Context, job store.Job) ([]outFile, error) {
 		return nil, fmt.Errorf("image ingestion needs OPENROUTER_API_KEY (vision model)")
 	}
 
-	raw, err := c.CompleteVision(ctx, imageSystemPrompt, imageUserPrompt, img.ref)
+	// iPhones shoot HEIC by default, which vision models reject; transcode
+	// those to an inline JPEG data URL (jpg carries the bytes to the vault).
+	visionRef, jpg, err := prepareVisionImage(ctx, img)
+	if err != nil {
+		return nil, fmt.Errorf("prepare image: %w", err)
+	}
+
+	raw, err := c.CompleteVision(ctx, imageSystemPrompt, imageUserPrompt, visionRef)
 	if err != nil {
 		return nil, fmt.Errorf("vision model: %w", err)
 	}
@@ -132,7 +139,7 @@ func buildImage(ctx context.Context, job store.Job) ([]outFile, error) {
 
 	// Save the source image into the vault and embed it at the top of the note
 	// so Obsidian shows the picture alongside the transcription.
-	asset := storeImageAsset(ctx, job, title, img, chunks)
+	asset := storeImageAsset(ctx, job, title, img, chunks, jpg)
 
 	files := renderChunksToFiles(job, title, resource, "", "", model, chunks)
 	if asset != nil {
@@ -144,20 +151,26 @@ func buildImage(ctx context.Context, job store.Job) ([]outFile, error) {
 // storeImageAsset downloads/decodes the source image, prepends an embed to the
 // first chunk's body, and returns the asset file to write (nil if unavailable).
 // It mutates chunks[0].Body to include the embed.
-func storeImageAsset(ctx context.Context, job store.Job, title string, img imagePayload, chunks []Chunk) *outFile {
+// converted holds JPEG bytes from a HEIC transcode (nil when no conversion
+// happened); when present it's embedded directly instead of re-fetching.
+func storeImageAsset(ctx context.Context, job store.Job, title string, img imagePayload, chunks []Chunk, converted []byte) *outFile {
 	if len(chunks) == 0 {
 		return nil
 	}
-	data, ext, err := loadImageBytes(ctx, img)
-	if err != nil || len(data) == 0 {
-		if err != nil {
-			log.Printf("ingest %s [image]: storing image failed (%v); note is text-only", shortID(job.ID), err)
+	data, ext := converted, "jpg"
+	if data == nil {
+		var err error
+		data, ext, err = loadImageBytes(ctx, img)
+		if err != nil || len(data) == 0 {
+			if err != nil {
+				log.Printf("ingest %s [image]: storing image failed (%v); note is text-only", shortID(job.ID), err)
+			}
+			// Fall back to embedding the remote URL so it at least renders online.
+			if img.isURL {
+				chunks[0].Body = "![](" + job.Payload + ")\n\n" + chunks[0].Body
+			}
+			return nil
 		}
-		// Fall back to embedding the remote URL so it at least renders online.
-		if img.isURL {
-			chunks[0].Body = "![](" + job.Payload + ")\n\n" + chunks[0].Body
-		}
-		return nil
 	}
 
 	short := shortID(job.ID)

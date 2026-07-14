@@ -40,6 +40,7 @@ func NewRouter(jobQueue chan<- store.Job, backendURL string) *chi.Mux {
 
 		// Any valid token (admin or member) can capture and read.
 		r.Post("/ingest", IngestHandler(jobQueue))
+		r.Post("/ingest/batch", BatchIngestHandler(jobQueue))
 		r.Get("/status/{id}", GetJobStatusHandler)
 		r.Get("/status", ListRecentJobsHandler)
 

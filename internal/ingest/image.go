@@ -1,14 +1,18 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
+	"image/jpeg"
 	"io"
 	"net/http"
 	nurl "net/url"
 	"strings"
 	"time"
+
+	"github.com/gen2brain/heic"
 )
 
 const imageSystemPrompt = `You are an OCR and image-understanding assistant.
@@ -42,6 +46,71 @@ func normalizeImagePayload(payload string) (imagePayload, error) {
 		return imagePayload{ref: p, isURL: true}, nil
 	}
 	return imagePayload{}, fmt.Errorf("image payload must be an http(s) URL or a data: URL")
+}
+
+// prepareVisionImage returns the reference to hand the vision model and, when a
+// conversion happened, the JPEG bytes so the vault can embed a viewable copy.
+// iPhones shoot HEIC by default, which OpenRouter's vision models reject (and
+// Obsidian can't render); those are decoded and re-encoded to an inline JPEG
+// data URL. Everything else passes through unchanged (jpg == nil), keeping the
+// original ref — a plain http(s) URL or an already-supported data URL.
+func prepareVisionImage(ctx context.Context, img imagePayload) (ref string, jpg []byte, err error) {
+	// Only pre-load bytes when the source might be HEIF: any data: URL (cheap,
+	// already in memory) or an http(s) URL whose path advertises a HEIF
+	// extension. This keeps the common non-HEIF http case a single download in
+	// the asset step, unchanged from before.
+	if !strings.HasPrefix(img.ref, "data:") && !isHEIFURL(img.ref) {
+		return img.ref, nil, nil
+	}
+	data, _, err := loadImageBytes(ctx, img)
+	if err != nil {
+		// Couldn't pre-load; fall back to the original ref and let the model try.
+		return img.ref, nil, nil
+	}
+	if !isHEIF(data) {
+		return img.ref, nil, nil
+	}
+	converted, err := transcodeHEIFToJPEG(data)
+	if err != nil {
+		return "", nil, err
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(converted), converted, nil
+}
+
+// isHEIF reports whether b is a HEIF/HEIC image, by sniffing the ISO-BMFF
+// 'ftyp' box brand. Sniffing the bytes is more reliable than trusting a data:
+// URL's declared MIME, which mobile clients often set to a generic value.
+func isHEIF(b []byte) bool {
+	if len(b) < 12 || string(b[4:8]) != "ftyp" {
+		return false
+	}
+	switch string(b[8:12]) {
+	case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "msf1", "heif":
+		return true
+	}
+	return false
+}
+
+func isHEIFURL(u string) bool {
+	pu, err := nurl.Parse(u)
+	if err != nil {
+		return false
+	}
+	p := strings.ToLower(pu.Path)
+	return strings.HasSuffix(p, ".heic") || strings.HasSuffix(p, ".heif")
+}
+
+// transcodeHEIFToJPEG decodes HEIF/HEIC bytes and re-encodes them as JPEG.
+func transcodeHEIFToJPEG(data []byte) ([]byte, error) {
+	src, err := heic.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode HEIC: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 88}); err != nil {
+		return nil, fmt.Errorf("encode JPEG: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 var imageHTTP = &http.Client{Timeout: 20 * time.Second}

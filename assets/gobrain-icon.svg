@@ -1,0 +1,43 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="40" y1="32" x2="216" y2="224" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5EEAD4"/>
+      <stop offset="0.55" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+
+  <!-- brain silhouette: right half + mirrored left half -->
+  <g stroke="url(#g)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- outline -->
+    <path d="M128 54
+             C 150 42, 176 46, 186 64
+             C 208 62, 220 84, 210 102
+             C 224 112, 222 136, 206 142
+             C 214 160, 200 180, 182 176
+             C 178 196, 152 202, 138 190
+             C 132 196, 124 196, 118 190
+             C 104 202, 78 196, 74 176
+             C 56 180, 42 160, 50 142
+             C 34 136, 32 112, 46 102
+             C 36 84, 48 62, 70 64
+             C 80 46, 106 42, 128 54 Z"/>
+    <!-- center fold -->
+    <path d="M128 54 L128 190" stroke-width="9"/>
+    <!-- right gyri -->
+    <path d="M128 88 C 150 86, 158 100, 150 112" stroke-width="8"/>
+    <path d="M128 132 C 154 130, 168 140, 160 156" stroke-width="8"/>
+    <!-- left gyri -->
+    <path d="M128 88 C 106 86, 98 100, 106 112" stroke-width="8"/>
+    <path d="M128 132 C 102 130, 88 140, 96 156" stroke-width="8"/>
+  </g>
+
+  <!-- knowledge-graph nodes (the vault / connected notes) -->
+  <g fill="url(#g)">
+    <circle cx="150" cy="112" r="9"/>
+    <circle cx="106" cy="112" r="9"/>
+    <circle cx="160" cy="156" r="9"/>
+    <circle cx="96" cy="156" r="9"/>
+    <circle cx="128" cy="190" r="9"/>
+  </g>
+</svg>

@@ -154,7 +154,8 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `GROQ_API_KEY`              | —                              | ASR key for the audio fallback ([free](https://console.groq.com)); also honored via `TRANSCRIBE_API_KEY` |
 | `TRANSCRIBE_MODEL`          | `whisper-large-v3-turbo`       | speech-to-text model for the audio fallback                    |
 | `TRANSCRIBE_BASE_URL`       | `https://api.groq.com/openai/v1` | ASR provider endpoint; point at OpenAI or any Whisper-compatible API |
-| `YTDLP_COOKIES`             | —                              | Netscape `cookies.txt` contents; needed for the audio fallback to clear YouTube's datacenter-IP bot wall (`YTDLP_COOKIES_FILE` for a path) |
+| `YTDLP_PROXY`               | —                              | route yt-dlp through a **residential** proxy so YouTube doesn't bot-block the server's datacenter IP; pay-as-you-go, ~pennies/video for captions |
+| `YTDLP_COOKIES`             | —                              | alt to a proxy: Netscape `cookies.txt` contents from a logged-in session (free, but re-export periodically). `YTDLP_COOKIES_FILE` for a path |
 | `RELATED_LINKS`             | `true`                         | auto-inject `[[related]]` blocks into notes; set `false` to disable body edits |
 | `OPENROUTER_BASE_URL`       | `https://openrouter.ai/api/v1` | override for a proxy/self-host                                  |
 | `VAULT_REPO_URL`            | —                              | git remote for the vault; unset → commits stay local           |

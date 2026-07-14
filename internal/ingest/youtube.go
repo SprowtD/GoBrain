@@ -50,7 +50,7 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 		"--sub-format", "vtt",
 		"-o", base + ".%(ext)s",
 	}
-	args = append(args, ytdlpCookieArgs()...)
+	args = append(args, ytdlpNetArgs()...)
 	args = append(args, url)
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -114,11 +114,30 @@ func audioFallbackEnabled() bool {
 	return false
 }
 
-// YouTube increasingly blocks unauthenticated media downloads from datacenter
-// IPs (like Railway) with a "confirm you're not a bot" wall. Supplying cookies
-// from a logged-in session gets past it. Set YTDLP_COOKIES_FILE to a path, or
-// paste a Netscape cookies.txt into YTDLP_COOKIES and we write it to disk once.
-// Applied to both the caption and audio yt-dlp calls; nil (omitted) when unset.
+// ytdlpNetArgs are the extra flags that get yt-dlp past YouTube's datacenter-IP
+// blocking: a residential proxy and/or session cookies. YouTube flags cloud IPs
+// (like Railway's) with a "confirm you're not a bot" wall — often only after a
+// burst of requests, which is why direct access works a few times then stops.
+// Both are optional and off by default; applied to every yt-dlp call.
+func ytdlpNetArgs() []string {
+	return append(ytdlpCookieArgs(), ytdlpProxyArgs()...)
+}
+
+// ytdlpProxyArgs routes yt-dlp through a proxy when YTDLP_PROXY is set (e.g.
+// http://user:pass@host:port or socks5://…). Use a *residential* proxy —
+// datacenter proxies are blocked by YouTube just like Railway's own IP. Captions
+// are tiny, so pay-as-you-go residential bandwidth costs fractions of a cent per
+// video.
+func ytdlpProxyArgs() []string {
+	if p := strings.TrimSpace(os.Getenv("YTDLP_PROXY")); p != "" {
+		return []string{"--proxy", p}
+	}
+	return nil
+}
+
+// ytdlpCookieArgs supplies cookies from a logged-in session — the free
+// alternative to a proxy. Set YTDLP_COOKIES_FILE to a path, or paste a Netscape
+// cookies.txt into YTDLP_COOKIES and we write it to disk once. Nil when unset.
 func ytdlpCookieArgs() []string {
 	if p := strings.TrimSpace(os.Getenv("YTDLP_COOKIES_FILE")); p != "" {
 		return []string{"--cookies", p}
@@ -179,7 +198,7 @@ func transcribeAudio(ctx context.Context, url, base string) (string, error) {
 		"--postprocessor-args", "ffmpeg:-ac 1 -ar 16000 -b:a 32k",
 		"-o", base + ".%(ext)s",
 	}
-	args = append(args, ytdlpCookieArgs()...)
+	args = append(args, ytdlpNetArgs()...)
 	args = append(args, url)
 	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {

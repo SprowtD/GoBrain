@@ -85,6 +85,8 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 4. **Set `OPENROUTER_API_KEY`**, and set **`BOOTSTRAP_ADMIN_TOKEN`** to a secret you generate (`openssl rand -hex 32`) — that becomes your admin token, no log-scraping needed.
 5. Redeploy → use your `BOOTSTRAP_ADMIN_TOKEN` as the admin bearer token. (Alternatively set `BOOTSTRAP_ADMIN_LABEL` to have a random one printed to the deploy logs on first boot.)
 
+> **Optional — capture videos with no captions.** Set **`GROQ_API_KEY`** ([free key](https://console.groq.com)) to transcribe a video's audio when YouTube has no captions for it. Without it, captioned videos still work; uncaptioned ones fail with a clear message. Note that pulling audio (unlike captions) can hit YouTube's "confirm you're not a bot" wall from a datacenter IP — if so, also set **`YTDLP_COOKIES`** (see the env table).
+
 > **Run a single instance (1 replica).** The single-writer vault + one volume must not be horizontally scaled.
 
 **One-click:** the [**Deploy on Railway**](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw) button at the top spins up a private instance — volume, healthcheck, and a generated admin token included. The deployer only supplies their own `OPENROUTER_API_KEY`.
@@ -154,6 +156,8 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `TRANSCRIBE_MODEL`          | `whisper-large-v3-turbo`       | speech-to-text model for the no-captions fallback              |
 | `TRANSCRIBE_BASE_URL`       | `https://api.groq.com/openai/v1` | ASR provider endpoint; point at OpenAI or any Whisper-compatible API |
 | `TRANSCRIBE_API_KEY`        | —                              | overrides `GROQ_API_KEY` if your ASR provider isn't Groq        |
+| `YTDLP_COOKIES`             | —                              | Netscape `cookies.txt` contents; lets audio download past YouTube's datacenter-IP bot wall |
+| `YTDLP_COOKIES_FILE`        | —                              | alt: path to a cookies file already on disk (takes precedence over `YTDLP_COOKIES`) |
 | `RELATED_LINKS`             | `true`                         | auto-inject `[[related]]` blocks into notes; set `false` to disable body edits |
 | `OPENROUTER_BASE_URL`       | `https://openrouter.ai/api/v1` | override for a proxy/self-host                                  |
 | `VAULT_REPO_URL`            | —                              | git remote for the vault; unset → commits stay local           |

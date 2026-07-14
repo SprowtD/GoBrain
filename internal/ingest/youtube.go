@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,7 +37,7 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 	defer os.RemoveAll(tmp)
 
 	base := filepath.Join(tmp, "v")
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	args := []string{
 		"--skip-download",
 		// We only ever want captions + metadata, never the media stream. When
 		// YouTube offers no downloadable format (e.g. "Only images are
@@ -47,9 +48,11 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 		"--write-auto-subs", "--write-subs",
 		"--sub-langs", "en.*,en",
 		"--sub-format", "vtt",
-		"-o", base+".%(ext)s",
-		url,
-	)
+		"-o", base + ".%(ext)s",
+	}
+	args = append(args, ytdlpCookieArgs()...)
+	args = append(args, url)
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return youtubeInfo{}, fmt.Errorf("yt-dlp failed: %v: %s", err, tail(string(out), 300))
 	}
@@ -93,6 +96,42 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 	return info, nil
 }
 
+// YouTube increasingly blocks unauthenticated media downloads from datacenter
+// IPs (like Railway) with a "confirm you're not a bot" wall. Supplying cookies
+// from a logged-in session gets past it. Set YTDLP_COOKIES_FILE to a path, or
+// paste a Netscape cookies.txt into YTDLP_COOKIES and we write it to disk once.
+// Applied to both the caption and audio yt-dlp calls; nil (omitted) when unset.
+func ytdlpCookieArgs() []string {
+	if p := strings.TrimSpace(os.Getenv("YTDLP_COOKIES_FILE")); p != "" {
+		return []string{"--cookies", p}
+	}
+	if p := cookieFileFromEnv(); p != "" {
+		return []string{"--cookies", p}
+	}
+	return nil
+}
+
+var (
+	cookieFilePath string
+	cookieFileOnce sync.Once
+)
+
+func cookieFileFromEnv() string {
+	cookieFileOnce.Do(func() {
+		contents := os.Getenv("YTDLP_COOKIES")
+		if strings.TrimSpace(contents) == "" {
+			return
+		}
+		p := filepath.Join(os.TempDir(), "yt-cookies.txt")
+		if err := os.WriteFile(p, []byte(contents), 0o600); err != nil {
+			log.Printf("youtube: could not write YTDLP_COOKIES to disk: %v", err)
+			return
+		}
+		cookieFilePath = p
+	})
+	return cookieFilePath
+}
+
 var (
 	transcriber     *llm.Transcriber
 	transcriberOnce sync.Once
@@ -115,14 +154,16 @@ func transcribeAudio(ctx context.Context, url, base string) (string, error) {
 
 	// bestaudio only (no video), re-encoded by ffmpeg to mono 16kHz 32kbps MP3
 	// — plenty for speech recognition and ~14MB/hour, so ~1.5h fits the 25MB cap.
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	args := []string{
 		"-f", "bestaudio/best",
 		"--extract-audio",
 		"--audio-format", "mp3",
 		"--postprocessor-args", "ffmpeg:-ac 1 -ar 16000 -b:a 32k",
-		"-o", base+".%(ext)s",
-		url,
-	)
+		"-o", base + ".%(ext)s",
+	}
+	args = append(args, ytdlpCookieArgs()...)
+	args = append(args, url)
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("audio download failed: %v: %s", err, tail(string(out), 300))
 	}

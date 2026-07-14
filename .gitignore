@@ -1,0 +1,16 @@
+# Binaries
+/server
+/bin/
+*.exe
+
+# Local data (SQLite db + vault)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Env
+.env
+
+# Private working notes / dev scratch — not for the public repo
+project.md

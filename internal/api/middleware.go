@@ -1,0 +1,50 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"secondbrain-server/internal/store"
+)
+
+type contextKey string
+
+const (
+	tokenLabelKey contextKey = "tokenLabel"
+	tokenRoleKey  contextKey = "tokenRole"
+)
+
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		rawToken := strings.TrimPrefix(authHeader, "Bearer ")
+		if rawToken == "" || rawToken == authHeader {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+
+		label, role, ok := store.VerifyToken(rawToken)
+		if !ok {
+			http.Error(w, "invalid or revoked token", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), tokenLabelKey, label)
+		ctx = context.WithValue(ctx, tokenRoleKey, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// RequireAdmin gates a route to admin tokens. Must be used inside a group that
+// already ran AuthMiddleware.
+func RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role, _ := r.Context().Value(tokenRoleKey).(string)
+		if role != store.RoleAdmin {
+			http.Error(w, "admin token required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

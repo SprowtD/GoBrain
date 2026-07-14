@@ -73,8 +73,15 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 
 	matches, _ := filepath.Glob(base + "*.vtt")
 	if len(matches) == 0 {
-		// No captions on this video — fall back to transcribing the audio so
-		// any video is capturable, not just ones YouTube has captions for.
+		// The overwhelming majority of videos have captions (YouTube
+		// auto-generates them), so by default we just report the rare miss
+		// cleanly. Transcribing the audio instead is possible but needs an ASR
+		// key and — because pulling media trips YouTube's datacenter bot wall —
+		// cookies, which doesn't suit a share-and-forget mobile flow. It stays
+		// available, opt-in, behind YOUTUBE_AUDIO_FALLBACK for anyone who wants it.
+		if !audioFallbackEnabled() {
+			return youtubeInfo{}, fmt.Errorf("this video has no captions available")
+		}
 		text, err := transcribeAudio(ctx, url, base)
 		if err != nil {
 			return youtubeInfo{}, fmt.Errorf("no captions available; %w", err)
@@ -94,6 +101,17 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 		info.Title = "youtube video"
 	}
 	return info, nil
+}
+
+// audioFallbackEnabled gates the no-captions audio-transcription path. Off by
+// default (it needs an ASR key + cookies, unsuited to the mobile flow); set
+// YOUTUBE_AUDIO_FALLBACK=true to revive it.
+func audioFallbackEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YOUTUBE_AUDIO_FALLBACK"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // YouTube increasingly blocks unauthenticated media downloads from datacenter

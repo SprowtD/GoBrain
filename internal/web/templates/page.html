@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoBrain</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // Apply saved theme before first paint to avoid a flash.
+    (function () {
+      var t = localStorage.getItem('gobrain.theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Go<span class="brand-accent">Brain</span></span>
+    </div>
+    <div class="topbar-right">
+      <span class="conn">
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span class="conn-label">connected</span>
+      </span>
+      <div class="theme-toggle" role="group" aria-label="Theme">
+        <button id="th-dark" aria-pressed="false" onclick="gbTheme('dark')">Dark</button>
+        <button id="th-light" aria-pressed="false" onclick="gbTheme('light')">Light</button>
+      </div>
+      <button class="ghost conn" onclick="gbDisconnect()" style="display:none">disconnect</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="connect" class="panel connect">
+      <h1 class="connect-title">Connect to your backend</h1>
+      <p class="connect-sub">Paste the access token your GoBrain backend generated. It stays in this browser — there is no account and no login.</p>
+      <form class="connect-form" onsubmit="gbConnect(event)">
+        <input id="token-input" class="mono" type="password" autocomplete="off" spellcheck="false" placeholder="access token" required>
+        <button class="primary" type="submit">Connect</button>
+      </form>
+    </section>
+
+    <section id="app">
+      <section class="panel capture">
+        <h2 class="panel-h">Capture</h2>
+        <form class="capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) this.reset()">
+          <div class="chips" id="kind-chips">
+            <label class="chip active"><input type="radio" name="source_kind" value="auto" checked hidden>Auto</label>
+            <label class="chip"><input type="radio" name="source_kind" value="article" hidden>Article</label>
+            <label class="chip"><input type="radio" name="source_kind" value="youtube" hidden>YouTube</label>
+            <label class="chip"><input type="radio" name="source_kind" value="image" hidden>Image</label>
+            <label class="chip"><input type="radio" name="source_kind" value="thought" hidden>Thought</label>
+          </div>
+          <input class="capture-payload mono" name="payload" required
+                 placeholder="Paste a link, or type a thought…" autocomplete="off">
+          <div class="capture-row">
+            <input class="capture-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
+            <button class="primary" type="submit">Capture</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel search">
+        <h2 class="panel-h">Search</h2>
+        <input class="search-input mono" type="search" name="q" placeholder="Search your vault…"
+               hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
+               hx-trigger="input changed delay:400ms, search">
+        <div id="search-results"></div>
+      </section>
+
+      <section class="panel library">
+        <div class="library-head">
+          <h2 class="panel-h">Library</h2>
+          <button class="ghost" onclick="gbRefresh()">refresh</button>
+        </div>
+        <div id="jobs">
+          <p class="empty">Loading…</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <aside id="note-panel" class="note-panel"></aside>
+
+  <script>
+  (function () {
+    var KEY = 'gobrain.token';
+    function token() { return localStorage.getItem(KEY) || ''; }
+    function setConnected(on) { document.body.classList.toggle('connected', on); }
+
+    document.body.addEventListener('htmx:configRequest', function (e) {
+      var t = token();
+      if (t) e.detail.headers['Authorization'] = 'Bearer ' + t;
+    });
+    document.body.addEventListener('htmx:responseError', function (e) {
+      if (e.detail.xhr.status === 401) disconnect();
+    });
+
+    function refreshJobs() {
+      if (!token() || document.hidden || typeof htmx === 'undefined') return;
+      htmx.ajax('GET', '/ui/jobs', { target: '#jobs', swap: 'innerHTML' });
+    }
+    function disconnect() { localStorage.removeItem(KEY); setConnected(false); }
+
+    window.gbConnect = function (ev) {
+      ev.preventDefault();
+      var t = document.getElementById('token-input').value.trim();
+      if (!t) return;
+      localStorage.setItem(KEY, t);
+      setConnected(true);
+      refreshJobs();
+    };
+    window.gbDisconnect = disconnect;
+    window.gbRefresh = refreshJobs;
+    window.gbCloseNote = function () { document.getElementById('note-panel').innerHTML = ''; };
+
+    // Theme toggle
+    function paintTheme() {
+      var t = document.documentElement.getAttribute('data-theme');
+      var dark = t !== 'light';
+      document.getElementById('th-dark').setAttribute('aria-pressed', String(dark));
+      document.getElementById('th-light').setAttribute('aria-pressed', String(!dark));
+    }
+    window.gbTheme = function (t) {
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem('gobrain.theme', t);
+      paintTheme();
+    };
+
+    // Source-kind chips (radio-backed)
+    document.getElementById('kind-chips').addEventListener('click', function (e) {
+      var label = e.target.closest('.chip');
+      if (!label) return;
+      this.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
+      label.classList.add('active');
+    });
+
+    setInterval(refreshJobs, 4000);
+    document.addEventListener('DOMContentLoaded', function () {
+      paintTheme();
+      if (token()) { setConnected(true); refreshJobs(); }
+    });
+  })();
+  </script>
+</body>
+</html>

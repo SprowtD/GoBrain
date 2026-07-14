@@ -1,0 +1,16 @@
+{{define "search"}}
+{{- if not .Query -}}
+{{- else if not .Hits -}}
+<p class="empty">No matches for “{{.Query}}”.</p>
+{{- else -}}
+<ul class="hits">
+  {{- range .Hits }}
+  <li class="hit">
+    <button class="hit-title link" hx-get="/ui/note?path={{.Path | urlquery}}" hx-target="#note-panel" hx-swap="innerHTML">{{.Title}}</button>
+    {{- if .Snippet}}<div class="hit-snippet">{{.Snippet}}</div>{{end}}
+    {{- if .Score}}<span class="score mono">{{printf "%.2f" .Score}}</span>{{end}}
+  </li>
+  {{- end }}
+</ul>
+{{- end -}}
+{{end}}

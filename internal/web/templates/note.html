@@ -1,0 +1,11 @@
+{{define "note"}}
+<div class="note-head">
+  <span class="note-path mono">{{.Path}}</span>
+  <button class="close" onclick="gbCloseNote()" aria-label="close">×</button>
+</div>
+{{- if .NotFound}}
+<p class="empty">Note not found.</p>
+{{- else}}
+<pre class="note-body">{{.Content}}</pre>
+{{- end}}
+{{end}}

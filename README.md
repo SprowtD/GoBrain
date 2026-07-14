@@ -17,6 +17,7 @@
 - **Ingests four source kinds** — articles (Readability), YouTube (yt-dlp captions → transcript), images (vision OCR, source image stored & embedded), and raw thoughts — on a bounded worker pool.
 - **Files everything as [OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) Markdown** into a git-backed vault: YAML frontmatter, auto-generated `index.md` per directory, and per-tag hub pages for an Obsidian-navigable graph.
 - **Semantic search + related notes** — every note is embedded (via OpenRouter); `/v1/search` ranks by meaning, `/v1/related` surfaces nearest neighbours, and each note gets an auto-generated `[[related]]` link block (Obsidian-navigable). Falls back to keyword search when no key is set, so it works either way.
+- **Built-in web UI** — a zero-install, dark-mode-first browser UI is served right from the backend at `/`: capture, watch jobs get filed, and search your vault. No extra service, no separate deploy (see [Web UI](#web-ui)).
 - **Shared with agents over MCP** — a stdio server lets Claude Code, Cursor, and friends read/write the same vault, so a team on different harnesses contributes to one brain.
 - **Durable by design** — a single-writer goroutine owns all disk + git mutations (atomic writes, debounced commits, `rebase`-before-push, crash-recovery commit on boot).
 
@@ -78,11 +79,38 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 
 **One-click:** the [**Deploy on Railway**](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw) button at the top spins up a private instance — volume, healthcheck, and a generated admin token included. The deployer only supplies their own `OPENROUTER_API_KEY`.
 
+## Web UI
+
+Open your backend's URL in a browser (`http://localhost:8080` locally, or your Railway domain) and you get a built-in, single-page UI — no install, no separate deployment, served straight from the same binary:
+
+- **Capture** a link, thought, or image URL (source kind is auto-detected).
+- **Library** with a live summary (filed / filing / misfiled) and status that updates as jobs are filed.
+- **Search** your vault (semantic when an OpenRouter key is set, keyword otherwise) and open any note.
+- **Dark-mode first**, follows your OS theme with a manual Dark/Light toggle.
+
+**Connecting** — there is no account or login. Paste an access token once; it's stored in that browser and sent as a bearer token on every request. Mint one with `server mint "my browser"` (or from an admin via `POST /v1/tokens`).
+
+### Connect the mobile app
+
+The companion Expo app (iOS/Android) connects to the same backend the same way — it just needs your backend URL + a token. Two paths:
+
+1. **One-tap join link.** `POST /v1/tokens` (admin) returns a `join_link` of the form:
+   ```
+   secondbrain://join?url=https://your-backend.up.railway.app&token=<raw-token>
+   ```
+   Open that link on the device and the app connects in one tap. (`BACKEND_URL` / `RAILWAY_PUBLIC_DOMAIN` must be set so the URL is complete.)
+2. **Manual.** In the app's Connect screen, enter your backend URL and paste a token minted by the backend.
+
+> The backend must be served over **HTTPS** — iOS App Transport Security blocks plain `http://`. Railway domains are HTTPS by default.
+
 ## Routes
 
 | Method | Path              | Auth   | Purpose                                   |
 |--------|-------------------|--------|-------------------------------------------|
 | GET    | `/healthz`        | none   | liveness probe                            |
+| GET    | `/`               | none   | built-in web UI (token entered in-browser) |
+| GET    | `/static/*`       | none   | web UI assets (embedded in the binary)    |
+| —      | `/ui/*`           | member | web UI data fragments (htmx)              |
 | POST   | `/v1/ingest`      | member | queue a job, returns `job_id`             |
 | GET    | `/v1/status/{id}` | member | one job's status                          |
 | GET    | `/v1/status`      | member | 50 most recent jobs                       |
@@ -149,6 +177,7 @@ go build -o secondbrain-mcp ./cmd/mcp
 cmd/server/main.go     boot, graceful shutdown, `mint`, first-boot bootstrap
 cmd/mcp/main.go        stdio MCP server (wraps the backend for any agent)
 internal/api/          chi router, bearer-auth middleware, handlers
+internal/web/          built-in htmx web UI (embedded templates + assets)
 internal/store/        SQLite: jobs, hashed tokens (roles), embeddings, worker pool
 internal/ingest/       ProcessJob: article/youtube/image/thought extraction + chunking
 internal/note/         OKF renderer for direct agent-authored notes

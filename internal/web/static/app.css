@@ -273,6 +273,53 @@ button { font-family: system-ui, sans-serif; cursor: pointer; }
   font-size: 0.8rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: var(--ink);
 }
 
+/* ---- link-your-phone modal ---- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 30;
+  background: rgba(4, 10, 14, 0.62);
+  backdrop-filter: blur(3px);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-backdrop.open { display: flex; }
+.modal {
+  width: min(420px, 100%);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; box-shadow: var(--shadow);
+  padding: 22px; max-height: 90vh; overflow: auto;
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.modal-title { font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; }
+.modal-sub { color: var(--ink-soft); font-size: 0.86rem; margin: 0 0 16px; line-height: 1.5; }
+.qr-box {
+  background: #fff; border-radius: 14px; padding: 14px;
+  display: grid; place-items: center; margin: 0 auto 16px; width: max-content;
+  border: 1px solid var(--border);
+}
+.qr-box svg { display: block; width: 200px; height: 200px; }
+.link-field {
+  display: flex; align-items: stretch; gap: 8px; margin-bottom: 10px;
+}
+.link-field .val {
+  flex: 1; min-width: 0;
+  font-family: ui-monospace, monospace; font-size: 0.72rem; color: var(--ink-soft);
+  background: var(--elevated); border: 1px solid var(--border); border-radius: 9px;
+  padding: 9px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  align-self: center;
+}
+.copy-btn {
+  flex: 0 0 auto; background: var(--elevated); border: 1px solid var(--border);
+  color: var(--accent-text); border-radius: 9px; padding: 0 13px; font-size: 0.78rem;
+  font-weight: 700; cursor: pointer; font-family: ui-monospace, monospace;
+}
+.copy-btn:hover { border-color: var(--accent); }
+.field-label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-faint); font-family: ui-monospace, monospace; margin: 12px 0 5px; }
+.modal-note { font-size: 0.76rem; color: var(--ink-faint); line-height: 1.5; margin-top: 14px; }
+.modal-warn { color: var(--amber); }
+.invite-row { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.invite-row .primary { width: 100%; }
+.invite-msg { font-size: 0.78rem; margin-top: 10px; color: var(--ink-soft); }
+.invite-msg.err { color: var(--coral); }
+
 @media (prefers-reduced-motion: reduce) {
   .note-panel { transition: none; }
   .pill-reading i { animation: none; }

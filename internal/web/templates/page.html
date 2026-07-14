@@ -13,6 +13,7 @@
     })();
   </script>
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/qrcode.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -25,11 +26,12 @@
         <span class="conn-dot" aria-hidden="true"></span>
         <span class="conn-label">connected</span>
       </span>
+      <button class="ghost conn" onclick="gbOpenLink()">Link phone</button>
       <div class="theme-toggle" role="group" aria-label="Theme">
         <button id="th-dark" aria-pressed="false" onclick="gbTheme('dark')">Dark</button>
         <button id="th-light" aria-pressed="false" onclick="gbTheme('light')">Light</button>
       </div>
-      <button class="ghost conn" onclick="gbDisconnect()" style="display:none">disconnect</button>
+      <button class="ghost conn" onclick="gbDisconnect()">disconnect</button>
     </div>
   </header>
 
@@ -86,6 +88,40 @@
 
   <aside id="note-panel" class="note-panel"></aside>
 
+  <!-- Link-your-phone modal: shows a QR of the secondbrain://join deep link -->
+  <div id="link-modal" class="modal-backdrop" onclick="if(event.target===this)gbCloseLink()">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Link your phone">
+      <div class="modal-head">
+        <span class="modal-title">Link your phone</span>
+        <button class="close" onclick="gbCloseLink()" aria-label="close">×</button>
+      </div>
+      <p class="modal-sub">Scan with your phone's camera to open the GoBrain app and connect to this backend — no typing.</p>
+      <div id="qr-box" class="qr-box" aria-hidden="true"></div>
+      <div id="link-warn" class="modal-note modal-warn" style="display:none">
+        This backend is served over <b>http</b>. The app requires <b>https</b> — the link will only work from an https URL (Railway domains are https).
+      </div>
+
+      <div class="field-label">Join link</div>
+      <div class="link-field">
+        <span id="join-link" class="val"></span>
+        <button class="copy-btn" onclick="gbCopy('join-link', this)">Copy</button>
+      </div>
+
+      <div class="field-label">Token only</div>
+      <div class="link-field">
+        <span id="join-token" class="val"></span>
+        <button class="copy-btn" onclick="gbCopy('join-token', this)">Copy</button>
+      </div>
+
+      <div class="invite-row">
+        <button class="primary" onclick="gbInvite(this)">Invite a teammate (new token)</button>
+        <div id="invite-msg" class="invite-msg" style="display:none"></div>
+      </div>
+
+      <p class="modal-note">The join link contains an access token — share it only with people you want writing to this vault. “Invite a teammate” mints a fresh member token (admin only).</p>
+    </div>
+  </div>
+
   <script>
   (function () {
     var KEY = 'gobrain.token';
@@ -117,6 +153,72 @@
     window.gbDisconnect = disconnect;
     window.gbRefresh = refreshJobs;
     window.gbCloseNote = function () { document.getElementById('note-panel').innerHTML = ''; };
+
+    // ---- Link your phone (QR of secondbrain://join) ----
+    function buildJoin(url, t) {
+      return 'secondbrain://join?url=' + encodeURIComponent(url) + '&token=' + encodeURIComponent(t);
+    }
+    function renderQR(link) {
+      var box = document.getElementById('qr-box');
+      box.innerHTML = '';
+      if (typeof qrcode === 'undefined') { box.textContent = 'QR unavailable'; return; }
+      var qr = qrcode(0, 'M');
+      qr.addData(link);
+      qr.make();
+      box.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 1, scalable: true });
+    }
+    function showJoin(url, t) {
+      var link = buildJoin(url, t);
+      document.getElementById('join-link').textContent = link;
+      document.getElementById('join-token').textContent = t;
+      renderQR(link);
+    }
+    window.gbOpenLink = function () {
+      var t = token();
+      if (!t) return;
+      showJoin(location.origin, t);
+      document.getElementById('link-warn').style.display = location.protocol === 'https:' ? 'none' : 'block';
+      var msg = document.getElementById('invite-msg');
+      msg.style.display = 'none';
+      document.getElementById('link-modal').classList.add('open');
+    };
+    window.gbCloseLink = function () { document.getElementById('link-modal').classList.remove('open'); };
+    window.gbCopy = function (id, btn) {
+      var text = document.getElementById(id).textContent;
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(text).then(function () {
+        var old = btn.textContent; btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = old; }, 1200);
+      });
+    };
+    window.gbInvite = function (btn) {
+      var msg = document.getElementById('invite-msg');
+      var old = btn.textContent; btn.disabled = true; btn.textContent = 'Minting…';
+      fetch(location.origin + '/v1/tokens', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'mobile app', role: 'member' }),
+      })
+        .then(function (r) {
+          if (r.status === 403) throw new Error('Your token is not an admin token — only admins can mint invites. You can still link your own device above.');
+          if (!r.ok) throw new Error('Could not mint a token (' + r.status + ').');
+          return r.json();
+        })
+        .then(function (d) {
+          var link = (d.join_link && d.join_link.indexOf('secondbrain://') === 0)
+            ? d.join_link
+            : buildJoin(location.origin, d.token);
+          document.getElementById('join-link').textContent = link;
+          document.getElementById('join-token').textContent = d.token;
+          renderQR(link);
+          msg.className = 'invite-msg'; msg.style.display = 'block';
+          msg.textContent = 'New member token minted — this QR now links a teammate.';
+        })
+        .catch(function (e) {
+          msg.className = 'invite-msg err'; msg.style.display = 'block'; msg.textContent = e.message;
+        })
+        .finally(function () { btn.disabled = false; btn.textContent = old; });
+    };
 
     // Theme toggle
     function paintTheme() {

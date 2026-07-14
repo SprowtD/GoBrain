@@ -90,6 +90,8 @@ Open your backend's URL in a browser (`http://localhost:8080` locally, or your R
 
 **Connecting** — there is no account or login. Paste an access token once; it's stored in that browser and sent as a bearer token on every request. Mint one with `server mint "my browser"` (or from an admin via `POST /v1/tokens`).
 
+**Link the mobile app with a QR** — once connected, hit **Link phone** in the web UI. It shows a QR of the `secondbrain://join` deep link (built from this backend's URL + your token) — scan it with your phone and the GoBrain app opens and connects, no typing. The join link and the raw token are also shown with copy buttons, and **Invite a teammate** mints a fresh member token (admin only) so a whole team can onboard by scanning. (The QR encodes an access token — only share it with people you want writing to the vault, and the backend must be HTTPS for the app to accept it.)
+
 ### Connect the mobile app
 
 The companion Expo app (iOS/Android) connects to the same backend the same way — it just needs your backend URL + a token. Two paths:

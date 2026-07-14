@@ -12,5 +12,11 @@
 # Env
 .env
 
+# SSH deploy keys / secrets — never commit
+*-vault-key
+*-vault-key.pub
+*.pem
+id_*
+
 # Private working notes / dev scratch — not for the public repo
 project.md

@@ -41,6 +41,16 @@ flowchart LR
     M --> C
 ```
 
+## Get started
+
+**Two ways to run it:**
+
+- **Fastest — one-click deploy, nothing to install.** Hit the [**Deploy on Railway**](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw) button; you only supply an `OPENROUTER_API_KEY`. Jump to [Deploy to Railway](#deploy-to-railway).
+- **Run it locally / hack on it.** You'll need a few things installed **first**:
+  - **[Go](https://go.dev/dl/) 1.23+** and **git** (required).
+  - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** (`brew install yt-dlp`) — only if you want YouTube ingestion.
+  - An **[OpenRouter](https://openrouter.ai) API key** — optional; enables AI chunking, image OCR, and semantic search. Without one, GoBrain still runs and falls back to keyword search.
+
 ## Quickstart (local)
 
 ```bash
@@ -94,16 +104,13 @@ Open your backend's URL in a browser (`http://localhost:8080` locally, or your R
 
 ### Connect the mobile app
 
-The companion Expo app (iOS/Android) connects to the same backend the same way — it just needs your backend URL + a token. Two paths:
+The [GoBrain app](#gobrain-mobile-app) (iOS/Android) connects to the same backend — it just needs your backend URL + a token. Three ways, easiest first:
 
-1. **One-tap join link.** `POST /v1/tokens` (admin) returns a `join_link` of the form:
-   ```
-   secondbrain://join?url=https://your-backend.up.railway.app&token=<raw-token>
-   ```
-   Open that link on the device and the app connects in one tap. (`BACKEND_URL` / `RAILWAY_PUBLIC_DOMAIN` must be set so the URL is complete.)
-2. **Manual.** In the app's Connect screen, enter your backend URL and paste a token minted by the backend.
+1. **Scan the QR.** In the app, tap **Scan QR to connect**, then point it at the **Link phone** QR in this web UI. Done.
+2. **One-tap join link.** `POST /v1/tokens` (admin) returns a `join_link` — `secondbrain://join?url=<backend>&token=<raw-token>`. Open it on the phone and the app connects. (`BACKEND_URL` / `RAILWAY_PUBLIC_DOMAIN` must be set so the URL is complete.)
+3. **Manual.** In the app's Connect screen, type your backend URL and paste a token.
 
-> The backend must be served over **HTTPS** — iOS App Transport Security blocks plain `http://`. Railway domains are HTTPS by default.
+> The backend must be served over **HTTPS** — iOS blocks plain `http://`. Railway domains are HTTPS by default.
 
 ## Routes
 
@@ -172,6 +179,21 @@ go build -o secondbrain-mcp ./cmd/mcp
   }
 }
 ```
+
+## GoBrain mobile app
+
+The backend already gives you a browser UI and a git-synced vault. The **GoBrain app** (iOS & Android) adds the one thing a browser can't: **capturing to your vault on the go.**
+
+- **Share straight from your phone.** Hit Share on a YouTube video, an article, or a photo → **GoBrain** → it lands in your vault and gets filed while you carry on with your day.
+- **Jot a thought the moment you have it**, from anywhere — it's in your second brain before you've put your phone down.
+- **Watch it file, then search your whole vault** from your pocket — the same semantic search that's on the web.
+- **Connect in one scan.** Open the web UI → **Link phone** → scan the QR from the app. No token typing.
+
+**A one-time purchase — not a subscription.** You self-host the backend and your vault lives in *your own git repo*, so keeping it in sync across devices costs you nothing. The app is a single upfront payment: buy it once, own it, no monthly fees ever. For comparison, Obsidian charges roughly **$4/month** for its Sync add-on just to keep a vault in sync across devices — GoBrain gives you that for free (it's just git) and asks once for the app.
+
+> The app talks only to **your** backend — GoBrain is not a hosted service and never sees your data or your keys. Bring your own backend, bring your own keys, own your knowledge.
+
+*iOS App Store & Google Play — coming soon.*
 
 ## Layout
 

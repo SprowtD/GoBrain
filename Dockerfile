@@ -7,8 +7,13 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /server ./cmd/server
 
 FROM alpine:3.20
-# git: vault push. yt-dlp: youtube transcript extraction (pulls python3).
-RUN apk add --no-cache ca-certificates git yt-dlp
+# git + openssh-client: vault push over SSH (GIT_SSH_COMMAND shells out to `ssh`).
+# yt-dlp from pip, not apk: the apk package lags and YouTube breaks stale
+# extractors ("Only images are available for download"); pip tracks the latest
+# release at build time. --break-system-packages: alpine's python is PEP 668
+# externally-managed, and this is a single-purpose container.
+RUN apk add --no-cache ca-certificates git openssh-client python3 py3-pip \
+ && pip install --no-cache-dir --break-system-packages -U yt-dlp
 COPY --from=build /server /server
 # Persistence is a Railway Volume mounted at /data (DB_PATH + VAULT_PATH live
 # there) — attach it on the service. Railway rejects the Docker VOLUME

@@ -35,6 +35,11 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 	base := filepath.Join(tmp, "v")
 	cmd := exec.CommandContext(ctx, "yt-dlp",
 		"--skip-download",
+		// We only ever want captions + metadata, never the media stream. When
+		// YouTube offers no downloadable format (e.g. "Only images are
+		// available"), don't let format selection fail the whole run — the
+		// subtitles we're after can still be written.
+		"--ignore-no-formats-error",
 		"--write-info-json",
 		"--write-auto-subs", "--write-subs",
 		"--sub-langs", "en.*,en",

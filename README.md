@@ -150,6 +150,10 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `OPENROUTER_MODEL`          | `openai/gpt-4o-mini`           | text chunking model                                             |
 | `OPENROUTER_VISION_MODEL`   | `openai/gpt-4o-mini`           | vision model for `image` OCR                                    |
 | `OPENROUTER_EMBEDDING_MODEL`| `qwen/qwen3-embedding-8b`      | embeddings for semantic search + related notes                 |
+| `GROQ_API_KEY`              | —                              | transcribes audio when a YouTube video has no captions; unset → those videos fail |
+| `TRANSCRIBE_MODEL`          | `whisper-large-v3-turbo`       | speech-to-text model for the no-captions fallback              |
+| `TRANSCRIBE_BASE_URL`       | `https://api.groq.com/openai/v1` | ASR provider endpoint; point at OpenAI or any Whisper-compatible API |
+| `TRANSCRIBE_API_KEY`        | —                              | overrides `GROQ_API_KEY` if your ASR provider isn't Groq        |
 | `RELATED_LINKS`             | `true`                         | auto-inject `[[related]]` blocks into notes; set `false` to disable body edits |
 | `OPENROUTER_BASE_URL`       | `https://openrouter.ai/api/v1` | override for a proxy/self-host                                  |
 | `VAULT_REPO_URL`            | —                              | git remote for the vault; unset → commits stay local           |

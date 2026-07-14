@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+
+	"secondbrain-server/internal/llm"
 )
 
 type youtubeInfo struct {
@@ -67,20 +70,72 @@ func fetchYouTube(ctx context.Context, url string) (youtubeInfo, error) {
 
 	matches, _ := filepath.Glob(base + "*.vtt")
 	if len(matches) == 0 {
-		return youtubeInfo{}, fmt.Errorf("no english captions available for this video")
+		// No captions on this video — fall back to transcribing the audio so
+		// any video is capturable, not just ones YouTube has captions for.
+		text, err := transcribeAudio(ctx, url, base)
+		if err != nil {
+			return youtubeInfo{}, fmt.Errorf("no captions available; %w", err)
+		}
+		info.Transcript = text
+	} else {
+		data, err := os.ReadFile(matches[0])
+		if err != nil {
+			return youtubeInfo{}, err
+		}
+		info.Transcript = captionsToText(string(data))
 	}
-	data, err := os.ReadFile(matches[0])
-	if err != nil {
-		return youtubeInfo{}, err
-	}
-	info.Transcript = captionsToText(string(data))
 	if strings.TrimSpace(info.Transcript) == "" {
-		return youtubeInfo{}, fmt.Errorf("caption file was empty after parsing")
+		return youtubeInfo{}, fmt.Errorf("transcript was empty after parsing")
 	}
 	if info.Title == "" {
 		info.Title = "youtube video"
 	}
 	return info, nil
+}
+
+var (
+	transcriber     *llm.Transcriber
+	transcriberOnce sync.Once
+)
+
+func asr() *llm.Transcriber {
+	transcriberOnce.Do(func() { transcriber = llm.NewTranscriberFromEnv() })
+	return transcriber
+}
+
+// transcribeAudio is the no-captions fallback: download the video's audio,
+// compressed to 16kHz mono so even long talks stay under the transcription
+// size limit, then run it through the ASR provider. base is the same temp
+// path prefix the caption pass used, so this reuses that scratch directory.
+func transcribeAudio(ctx context.Context, url, base string) (string, error) {
+	t := asr()
+	if !t.Available() {
+		return "", fmt.Errorf("audio transcription is not configured (set GROQ_API_KEY)")
+	}
+
+	// bestaudio only (no video), re-encoded by ffmpeg to mono 16kHz 32kbps MP3
+	// — plenty for speech recognition and ~14MB/hour, so ~1.5h fits the 25MB cap.
+	cmd := exec.CommandContext(ctx, "yt-dlp",
+		"-f", "bestaudio/best",
+		"--extract-audio",
+		"--audio-format", "mp3",
+		"--postprocessor-args", "ffmpeg:-ac 1 -ar 16000 -b:a 32k",
+		"-o", base+".%(ext)s",
+		url,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("audio download failed: %v: %s", err, tail(string(out), 300))
+	}
+
+	audio := base + ".mp3"
+	if _, err := os.Stat(audio); err != nil {
+		return "", fmt.Errorf("audio file missing after download")
+	}
+	text, err := t.Transcribe(ctx, audio)
+	if err != nil {
+		return "", fmt.Errorf("transcription failed: %w", err)
+	}
+	return text, nil
 }
 
 var captionTagRe = regexp.MustCompile(`<[^>]*>`)

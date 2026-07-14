@@ -12,7 +12,8 @@ FROM alpine:3.20
 # extractors ("Only images are available for download"); pip tracks the latest
 # release at build time. --break-system-packages: alpine's python is PEP 668
 # externally-managed, and this is a single-purpose container.
-RUN apk add --no-cache ca-certificates git openssh-client python3 py3-pip \
+# ffmpeg: extract + compress audio for the no-captions transcription fallback.
+RUN apk add --no-cache ca-certificates git openssh-client python3 py3-pip ffmpeg \
  && pip install --no-cache-dir --break-system-packages -U yt-dlp
 COPY --from=build /server /server
 # Persistence is a Railway Volume mounted at /data (DB_PATH + VAULT_PATH live

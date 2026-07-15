@@ -72,6 +72,32 @@ CREATE TABLE IF NOT EXISTS embeddings (
 	vec         BLOB NOT NULL,
 	updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- OAuth 2.1 support for the remote MCP connector (see oauth.go).
+CREATE TABLE IF NOT EXISTS oauth_clients (
+	client_id     TEXT PRIMARY KEY,
+	redirect_uris TEXT NOT NULL,   -- JSON array
+	client_name   TEXT,
+	created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+	code_hash      TEXT PRIMARY KEY,
+	client_id      TEXT NOT NULL,
+	redirect_uri   TEXT NOT NULL,
+	code_challenge TEXT NOT NULL,
+	label          TEXT NOT NULL,
+	role           TEXT NOT NULL,
+	expires_at     TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+	token_hash   TEXT PRIMARY KEY,
+	refresh_hash TEXT,
+	client_id    TEXT NOT NULL,
+	label        TEXT NOT NULL,
+	role         TEXT NOT NULL,
+	expires_at   TIMESTAMP NOT NULL,
+	created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_hash);
 `
 	if _, err := conn.Exec(schema); err != nil {
 		return err

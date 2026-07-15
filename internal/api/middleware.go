@@ -36,6 +36,24 @@ func AuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// corsMiddleware opens the MCP + OAuth routes to cross-origin browser clients
+// (e.g. a web-based MCP connector). The bearer token travels in the Authorization
+// header, not a cookie, so a wildcard origin is safe. Preflight OPTIONS requests
+// are answered here directly.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Mcp-Protocol-Version, Mcp-Session-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id, WWW-Authenticate")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // RequireAdmin gates a route to admin tokens. Must be used inside a group that
 // already ran AuthMiddleware.
 func RequireAdmin(next http.Handler) http.Handler {

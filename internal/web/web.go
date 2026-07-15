@@ -75,16 +75,19 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 		kind = detectKind(payload)
 	}
 
-	job, err := store.CreateJob(kind, payload, note, "web")
+	job, duplicate, err := store.CreateJobDeduped(kind, payload, note, "web")
 	if err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 	// Non-blocking enqueue: mirror the JSON handler's load-shedding. The row
-	// stays 'queued' if the buffer is full.
-	select {
-	case h.queue <- job:
-	default:
+	// stays 'queued' if the buffer is full. A duplicate capture is collapsed onto
+	// the existing job, so there's nothing new to queue.
+	if !duplicate {
+		select {
+		case h.queue <- job:
+		default:
+		}
 	}
 
 	h.renderJobs(w)

@@ -122,7 +122,7 @@ The [GoBrain app](#gobrain-mobile-app) (iOS/Android) connects to the same backen
 | GET    | `/`               | none   | built-in web UI (token entered in-browser) |
 | GET    | `/static/*`       | none   | web UI assets (embedded in the binary)    |
 | —      | `/ui/*`           | member | web UI data fragments (htmx)              |
-| POST   | `/v1/ingest`      | member | queue a job, returns `job_id`             |
+| POST   | `/v1/ingest`      | member | queue a job, returns `job_id` (idempotent: identical content returns the existing job with `duplicate:true`; pass `"force":true` to re-ingest) |
 | GET    | `/v1/status/{id}` | member | one job's status                          |
 | GET    | `/v1/status`      | member | 50 most recent jobs                       |
 | POST   | `/v1/notes`       | member | write a structured note                   |

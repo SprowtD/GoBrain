@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 	error        TEXT,
 	output_path  TEXT,
 	token_label  TEXT,
+	content_hash TEXT,
 	created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -112,6 +113,18 @@ CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_hash
 		if _, err := conn.Exec(`UPDATE tokens SET role = 'admin'`); err != nil {
 			return err
 		}
+	}
+
+	// Migration: add content_hash for ingest de-duplication to DBs created before
+	// it existed. The index is created after the column is guaranteed present (it
+	// can't live in the schema block above, which runs before this ALTER).
+	if !columnExists(conn, "jobs", "content_hash") {
+		if _, err := conn.Exec(`ALTER TABLE jobs ADD COLUMN content_hash TEXT`); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_content_hash ON jobs(content_hash)`); err != nil {
+		return err
 	}
 	return nil
 }

@@ -89,6 +89,77 @@ func TestBatchIngest_AllShed503(t *testing.T) {
 	}
 }
 
+func postIngest(t *testing.T, q chan store.Job, body ingestRequest) (*httptest.ResponseRecorder, ingestResponse) {
+	t.Helper()
+	buf, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest", bytes.NewReader(buf))
+	rec := httptest.NewRecorder()
+	IngestHandler(q)(rec, req)
+	var resp ingestResponse
+	if rec.Body.Len() > 0 && rec.Header().Get("Content-Type") == "application/json" {
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	}
+	return rec, resp
+}
+
+func TestIngest_DeduplicatesRepeatUpload(t *testing.T) {
+	initStore(t)
+	q := make(chan store.Job, 128)
+	const photo = "data:image/jpeg;base64,SAMEPHOTO"
+
+	// First upload: queued (202), a new job.
+	rec, first := postIngest(t, q, ingestRequest{SourceKind: "image", Payload: photo})
+	if rec.Code != http.StatusAccepted || first.JobID == "" || first.Duplicate {
+		t.Fatalf("first: code=%d job=%q dup=%v; want 202, a job, not dup", rec.Code, first.JobID, first.Duplicate)
+	}
+
+	// Second identical upload: 200, flagged duplicate, same job, NOT re-queued.
+	rec, second := postIngest(t, q, ingestRequest{SourceKind: "image", Payload: photo})
+	if rec.Code != http.StatusOK || !second.Duplicate || second.JobID != first.JobID {
+		t.Fatalf("second: code=%d dup=%v job=%q; want 200, dup, same job %q", rec.Code, second.Duplicate, second.JobID, first.JobID)
+	}
+	if len(q) != 1 {
+		t.Fatalf("queue depth = %d; want 1 (duplicate must not enqueue)", len(q))
+	}
+
+	// force re-ingests: a brand-new job, queued again.
+	rec, forced := postIngest(t, q, ingestRequest{SourceKind: "image", Payload: photo, Force: true})
+	if rec.Code != http.StatusAccepted || forced.Duplicate || forced.JobID == first.JobID {
+		t.Fatalf("forced: code=%d dup=%v job=%q; want 202, fresh job", rec.Code, forced.Duplicate, forced.JobID)
+	}
+	if len(q) != 2 {
+		t.Fatalf("queue depth = %d; want 2 after forced re-ingest", len(q))
+	}
+}
+
+func TestBatchIngest_CollapsesRepeatsWithinBatch(t *testing.T) {
+	initStore(t)
+	q := make(chan store.Job, 128)
+	const photo = "data:image/png;base64,DUPEDUPE"
+
+	_, resp := postBatch(t, q, batchIngestRequest{Items: []ingestRequest{
+		{SourceKind: "image", Payload: photo},   // 0: new
+		{SourceKind: "image", Payload: photo},   // 1: duplicate of 0
+		{SourceKind: "image", Payload: photo},   // 2: duplicate of 0
+		{SourceKind: "thought", Payload: "note"}, // 3: new, distinct
+	}})
+	if resp.Results[0].JobID == "" || resp.Results[0].Duplicate {
+		t.Fatalf("item0 should be a new job: %+v", resp.Results[0])
+	}
+	for _, i := range []int{1, 2} {
+		if !resp.Results[i].Duplicate || resp.Results[i].JobID != resp.Results[0].JobID {
+			t.Fatalf("item%d should duplicate item0: %+v", i, resp.Results[i])
+		}
+	}
+	if resp.Results[3].JobID == "" || resp.Results[3].Duplicate {
+		t.Fatalf("item3 (distinct) should be new: %+v", resp.Results[3])
+	}
+	// Only the two distinct captures were queued.
+	if len(q) != 2 {
+		t.Fatalf("queue depth = %d; want 2 (one photo + one thought)", len(q))
+	}
+}
+
 func TestBatchIngest_EmptyAndTooMany(t *testing.T) {
 	initStore(t)
 	q := make(chan store.Job, 128)

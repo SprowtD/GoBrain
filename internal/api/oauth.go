@@ -316,24 +316,39 @@ func writeJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// baseURL is the public origin of this backend. Prefers the configured
-// BACKEND_URL; otherwise derives it from the (proxied) request so OAuth works on
-// a fresh Railway deploy before BACKEND_URL is set.
+// baseURL is the public origin to advertise in OAuth metadata / redirects. It is
+// derived from the host the client actually reached us on (via the proxy
+// headers), because for OAuth the issuer and endpoint URLs MUST resolve for that
+// client — a stale or localhost BACKEND_URL would otherwise hand back
+// unreachable URLs (e.g. http://localhost:8080/oauth/authorize → the client
+// connects to its own machine → ConnectionRefused). The configured value is only
+// a fallback for the rare case the request carries no Host.
 func baseURL(r *http.Request, configured string) string {
-	if configured != "" {
-		return strings.TrimRight(configured, "/")
+	scheme := firstHeaderValue(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
 	}
-	scheme := "https"
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	} else if r.TLS == nil {
-		scheme = "http"
+	host := firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
 	}
-	host := r.Host
-	if xh := r.Header.Get("X-Forwarded-Host"); xh != "" {
-		host = xh
+	if host != "" {
+		return scheme + "://" + host
 	}
-	return scheme + "://" + host
+	return strings.TrimRight(configured, "/")
+}
+
+// firstHeaderValue returns the first entry of a possibly comma-separated proxy
+// header (e.g. "X-Forwarded-Proto: https,http").
+func firstHeaderValue(v string) string {
+	if i := strings.IndexByte(v, ','); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
 }
 
 func bearerToken(r *http.Request) string {

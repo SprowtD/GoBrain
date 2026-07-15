@@ -66,6 +66,13 @@ func Start(path string) {
 		if err := commit(); err != nil {
 			log.Printf("vault: recovery commit failed: %v", err)
 		}
+		// Flush commits that were made locally but never reached the remote (e.g.
+		// earlier pushes failed). commit() only pushes when it creates a new
+		// commit, so a clean-but-ahead working tree wouldn't otherwise sync until
+		// the next write. Best-effort and a no-op when already up to date.
+		if remoteURL != "" {
+			push()
+		}
 
 		go writer()
 	})
@@ -225,6 +232,18 @@ func ensureRepo() error {
 		if err := runGit("init", "-b", "main"); err != nil {
 			return err
 		}
+	}
+	// Persist the commit identity on the repo. commit() passes it inline, but the
+	// rebase-before-push re-creates commits and reads the identity only from
+	// config — and a container's git (no OS user/gecos) can't auto-detect one, so
+	// without this the rebase aborts with "Committer identity unknown", every push
+	// bounces as non-fast-forward, and commits pile up locally, never reaching the
+	// remote. Set on every boot so existing volumes self-heal, not just fresh ones.
+	if err := runGit("config", "user.name", authorName); err != nil {
+		log.Printf("vault: set user.name failed: %v", err)
+	}
+	if err := runGit("config", "user.email", authorEmail); err != nil {
+		log.Printf("vault: set user.email failed: %v", err)
 	}
 	if remoteURL != "" {
 		// set-url updates an existing origin; if there is none yet, add it.

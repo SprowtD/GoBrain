@@ -12,6 +12,16 @@ import (
 func NewRouter(jobQueue chan<- store.Job, backendURL string) *chi.Mux {
 	r := chi.NewRouter()
 
+	// CORS is mounted at the root so it wraps the entire mux — including requests
+	// that match no method route. That matters for OAuth: browser-based MCP
+	// clients send an OPTIONS preflight to /oauth/token and /oauth/register, and
+	// those paths only register POST. A group-scoped middleware wouldn't run for
+	// the unmatched OPTIONS (chi answers it with a bare 405, no CORS headers), so
+	// the preflight — and thus the token exchange — would fail. At the root, every
+	// preflight is answered. Safe as a wildcard because auth is a bearer header,
+	// never a cookie, so there's no ambient-credential surface to protect.
+	r.Use(corsMiddleware)
+
 	// Unauthenticated liveness probe for Railway health checks.
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -22,10 +32,9 @@ func NewRouter(jobQueue chan<- store.Job, backendURL string) *chi.Mux {
 	// authorization server, so any agent adds the vault by URL alone (no local
 	// binary). All are public at the router level — /mcp authenticates itself
 	// (OAuth access token or minted token), and the OAuth/discovery routes must
-	// be reachable pre-auth. CORS is opened so browser-based connectors work.
+	// be reachable pre-auth. CORS (mounted at the root above) lets browser-based
+	// connectors reach these.
 	r.Group(func(r chi.Router) {
-		r.Use(corsMiddleware)
-
 		// RFC 9728 / RFC 8414 discovery. Some clients probe the /mcp-suffixed
 		// protected-resource path, so both are served.
 		r.Get("/.well-known/oauth-protected-resource", ProtectedResourceMetadata(backendURL))

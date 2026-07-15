@@ -11,10 +11,18 @@ type ingestRequest struct {
 	SourceKind string `json:"source_kind"`
 	Payload    string `json:"payload"`
 	Note       string `json:"note,omitempty"`
+	// Force re-ingests identical content instead of collapsing it onto the
+	// existing job (e.g. deliberately re-capturing an article that changed).
+	Force bool `json:"force,omitempty"`
 }
 
 type ingestResponse struct {
 	JobID string `json:"job_id"`
+	// Duplicate is true when this content was already captured, so JobID points
+	// at the pre-existing job and nothing new was queued. OutputPath is that
+	// job's note path when it has already filed.
+	Duplicate  bool   `json:"duplicate,omitempty"`
+	OutputPath string `json:"output_path,omitempty"`
 }
 
 func IngestHandler(jobQueue chan<- store.Job) http.HandlerFunc {
@@ -36,9 +44,18 @@ func IngestHandler(jobQueue chan<- store.Job) http.HandlerFunc {
 
 		tokenLabel, _ := r.Context().Value(tokenLabelKey).(string)
 
-		job, err := store.CreateJob(req.SourceKind, req.Payload, req.Note, tokenLabel)
+		job, duplicate, err := createJob(req, tokenLabel)
 		if err != nil {
 			http.Error(w, "failed to create job", http.StatusInternalServerError)
+			return
+		}
+
+		// Already captured: return the existing job and don't re-queue, so the
+		// same photo can't be filed twice. 200 (not 202) — nothing new started.
+		if duplicate {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(ingestResponse{JobID: job.ID, Duplicate: true, OutputPath: job.OutputPath})
 			return
 		}
 
@@ -57,6 +74,16 @@ func IngestHandler(jobQueue chan<- store.Job) http.HandlerFunc {
 	}
 }
 
+// createJob applies de-duplication unless the request opts out with force. It
+// centralizes the choice so /ingest and /ingest/batch behave identically.
+func createJob(req ingestRequest, tokenLabel string) (store.Job, bool, error) {
+	if req.Force {
+		job, err := store.CreateJob(req.SourceKind, req.Payload, req.Note, tokenLabel)
+		return job, false, err
+	}
+	return store.CreateJobDeduped(req.SourceKind, req.Payload, req.Note, tokenLabel)
+}
+
 // maxBatchItems caps a single batch so one request can't flood the queue. The
 // worker pool drains these concurrently; a bounded batch keeps the buffered
 // queue (cap 128 in StartWorkers) from being blown by one caller.
@@ -69,9 +96,10 @@ type batchIngestRequest struct {
 // batchItemResult carries the per-item outcome so a client that sent N photos
 // can tell exactly which ones were queued and retry only the failures.
 type batchItemResult struct {
-	Index int    `json:"index"`
-	JobID string `json:"job_id,omitempty"`
-	Error string `json:"error,omitempty"`
+	Index     int    `json:"index"`
+	JobID     string `json:"job_id,omitempty"`
+	Duplicate bool   `json:"duplicate,omitempty"` // content already captured; JobID is the existing job
+	Error     string `json:"error,omitempty"`
 }
 
 type batchIngestResponse struct {
@@ -114,9 +142,17 @@ func BatchIngestHandler(jobQueue chan<- store.Job) http.HandlerFunc {
 				continue
 			}
 
-			job, err := store.CreateJob(item.SourceKind, item.Payload, item.Note, tokenLabel)
+			job, duplicate, err := createJob(item, tokenLabel)
 			if err != nil {
 				results[i].Error = "failed to create job"
+				continue
+			}
+
+			// Already captured (e.g. the same photo sent several times in one
+			// batch): report the existing job and don't re-queue it.
+			if duplicate {
+				results[i].JobID = job.ID
+				results[i].Duplicate = true
 				continue
 			}
 

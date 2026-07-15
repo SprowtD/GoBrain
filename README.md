@@ -168,23 +168,48 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 
 **Tools:** `search_vault` · `read_note` · `related_notes` · `write_note` · `delete_note` · `project_index`
 
+It's a **local (stdio)** server that Claude launches as a process — it doesn't auto-detect anything, so you point it at **your** backend with two env vars: `SECONDBRAIN_URL` (your backend's URL) and `SECONDBRAIN_TOKEN` (a token you mint). Three one-time steps:
+
+**1. Build the binary** (needs Go + this repo):
 ```bash
 go build -o secondbrain-mcp ./cmd/mcp
 ```
 
+**2. Mint a token** — from the web UI (**Invite a teammate**) or the admin API:
+```bash
+curl -X POST https://your-backend.up.railway.app/v1/tokens \
+  -H "Authorization: Bearer <YOUR_ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" -d '{"label":"mcp"}'
+# → { "token": "<use this>", ... }
+```
+
+**3. Register it with Claude.**
+
+*Claude Code* — one command (`--scope user` makes it available in every project):
+```bash
+claude mcp add gobrain --scope user \
+  -e SECONDBRAIN_URL=https://your-backend.up.railway.app \
+  -e SECONDBRAIN_TOKEN=<the token from step 2> \
+  -- /absolute/path/to/secondbrain-mcp
+```
+Then `claude mcp list` to confirm it's connected. Everything after `--` is the launch command; the `-e` values are the only place your URL and token live.
+
+*Claude Desktop* — add to `claude_desktop_config.json` (Settings → Developer → Edit Config) and restart:
 ```json
 {
   "mcpServers": {
-    "secondbrain": {
-      "command": "/path/to/secondbrain-mcp",
+    "gobrain": {
+      "command": "/absolute/path/to/secondbrain-mcp",
       "env": {
         "SECONDBRAIN_URL": "https://your-backend.up.railway.app",
-        "SECONDBRAIN_TOKEN": "<a token minted by the backend>"
+        "SECONDBRAIN_TOKEN": "<the token from step 2>"
       }
     }
   }
 }
 ```
+
+> **No paste-a-URL connector yet.** Because this is a stdio server, each user builds the binary and supplies their own URL + token — there's no auto-discovery. A one-click remote connector (add by URL, no local build) would need the MCP served over HTTP from the backend; not there yet.
 
 ## GoBrain mobile app
 

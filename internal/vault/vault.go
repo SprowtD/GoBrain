@@ -245,6 +245,7 @@ func ensureRepo() error {
 	if err := runGit("config", "user.email", authorEmail); err != nil {
 		log.Printf("vault: set user.email failed: %v", err)
 	}
+	configureMergeDrivers()
 	if remoteURL != "" {
 		// set-url updates an existing origin; if there is none yet, add it.
 		if err := runGit("remote", "set-url", "origin", remoteURL); err != nil {
@@ -254,6 +255,35 @@ func ensureRepo() error {
 		}
 	}
 	return nil
+}
+
+// configureMergeDrivers makes the rebase-before-push auto-resolve conflicts on
+// the machine-generated files — each directory's index.md and the tags/ hub
+// pages. Those are regenerated deterministically from the note set on the next
+// commit, so any conflict on them is meaningless; but if the remote has diverged
+// (e.g. an earlier instance pushed a different state), they collide on every
+// rebase and the push can never complete — stranding every real note locally.
+// Real notes have unique random-id paths and don't collide, so a genuine (rare)
+// note conflict still surfaces normally.
+//
+// The "ours" driver keeps the current side and always exits 0, so git treats the
+// generated-file conflict as resolved and finishes the rebase. Wired via
+// .git/info/attributes so the rule is per-instance and never committed into the
+// vault. Runs every boot to heal existing volumes.
+func configureMergeDrivers() {
+	if err := runGit("config", "merge.ours.driver", "true"); err != nil {
+		log.Printf("vault: set merge driver failed: %v", err)
+		return
+	}
+	infoDir := filepath.Join(rootPath, ".git", "info")
+	if err := os.MkdirAll(infoDir, 0o755); err != nil {
+		log.Printf("vault: create .git/info failed: %v", err)
+		return
+	}
+	const attrs = "index.md merge=ours\ntags/*.md merge=ours\n"
+	if err := os.WriteFile(filepath.Join(infoDir, "attributes"), []byte(attrs), 0o644); err != nil {
+		log.Printf("vault: write git attributes failed: %v", err)
+	}
 }
 
 // setupSSH writes GIT_SSH_KEY to a private file outside the vault (so it never

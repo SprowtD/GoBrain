@@ -84,6 +84,7 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 3. **Generate a domain** (Settings → Networking) — `BACKEND_URL` auto-derives from it.
 4. **Set `OPENROUTER_API_KEY`**, and set **`BOOTSTRAP_ADMIN_TOKEN`** to a secret you generate (`openssl rand -hex 32`) — that becomes your admin token, no log-scraping needed.
 5. Redeploy → use your `BOOTSTRAP_ADMIN_TOKEN` as the admin bearer token. (Alternatively set `BOOTSTRAP_ADMIN_LABEL` to have a random one printed to the deploy logs on first boot.)
+6. **Connect your tools:** the [mobile app](#connect-the-mobile-app) (scan the QR) and your agent via the [MCP server](#mcp-server--share-the-vault-with-any-agent) (`claude mcp add …`).
 
 > **Run a single instance (1 replica).** The single-writer vault + one volume must not be horizontally scaled.
 

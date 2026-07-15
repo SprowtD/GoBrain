@@ -2,11 +2,17 @@
 // MCP-compatible agent (Claude Code, Cursor, ...). It calls a running
 // secondbrain backend over HTTP using SECONDBRAIN_URL + SECONDBRAIN_TOKEN, so
 // it works across harnesses and whether or not the vault is cloned locally.
+//
+// The tool surface and JSON-RPC framing live in internal/mcp, shared with the
+// backend's built-in Streamable HTTP server (internal/api) so a stdio launch and
+// a remote "add by URL" connector expose exactly the same tools. This binary is
+// just the stdio transport plus an HTTP-backed mcp.Backend.
 package main
 
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +21,8 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode"
+
+	"secondbrain-server/internal/mcp"
 )
 
 var (
@@ -31,37 +38,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "mcp: set SECONDBRAIN_URL and SECONDBRAIN_TOKEN")
 		os.Exit(1)
 	}
-	serve(os.Stdin, os.Stdout)
+	serve(os.Stdin, os.Stdout, httpBackend{})
 }
 
-// --- JSON-RPC 2.0 (line-delimited, per the MCP stdio transport) ---
-
-type rpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func serve(in io.Reader, out io.Writer) {
+// serve runs the line-delimited JSON-RPC loop of the MCP stdio transport,
+// dispatching each request through the shared core.
+func serve(in io.Reader, out io.Writer, b mcp.Backend) {
 	reader := bufio.NewReader(in)
 	writer := bufio.NewWriter(out)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if line = bytes.TrimSpace(line); len(line) > 0 {
-			handleLine(line, writer)
+			handleLine(line, writer, b)
 			writer.Flush()
 		}
 		if err != nil {
@@ -70,203 +58,32 @@ func serve(in io.Reader, out io.Writer) {
 	}
 }
 
-func handleLine(line []byte, w *bufio.Writer) {
-	var req rpcRequest
+func handleLine(line []byte, w *bufio.Writer, b mcp.Backend) {
+	var req mcp.Request
 	if err := json.Unmarshal(line, &req); err != nil {
 		return
 	}
-	isNotification := len(req.ID) == 0
-	result, rerr := dispatch(req)
-	if isNotification {
+	result, rerr := mcp.Handle(context.Background(), req, b)
+	if req.IsNotification() {
 		return // notifications get no response
 	}
-	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
-	if rerr != nil {
-		resp.Error = rerr
-	} else {
-		resp.Result = result
-	}
-	b, _ := json.Marshal(resp)
-	w.Write(b)
+	resp := mcp.Response{JSONRPC: "2.0", ID: req.ID, Result: result, Error: rerr}
+	out, _ := json.Marshal(resp)
+	w.Write(out)
 	w.WriteByte('\n')
 }
 
-func dispatch(req rpcRequest) (any, *rpcError) {
-	switch req.Method {
-	case "initialize":
-		return initialize(req.Params), nil
-	case "tools/list":
-		return map[string]any{"tools": toolDefs()}, nil
-	case "tools/call":
-		return toolsCall(req.Params)
-	case "ping":
-		return map[string]any{}, nil
-	default:
-		if strings.HasPrefix(req.Method, "notifications/") {
-			return nil, nil
-		}
-		return nil, &rpcError{Code: -32601, Message: "method not found: " + req.Method}
-	}
-}
+// --- HTTP-backed mcp.Backend: wraps the running secondbrain backend ---
 
-func initialize(params json.RawMessage) any {
-	version := "2024-11-05"
-	var p struct {
-		ProtocolVersion string `json:"protocolVersion"`
-	}
-	if json.Unmarshal(params, &p) == nil && p.ProtocolVersion != "" {
-		version = p.ProtocolVersion
-	}
-	return map[string]any{
-		"protocolVersion": version,
-		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "secondbrain", "version": "0.1.0"},
-	}
-}
+type httpBackend struct{}
 
-// --- tools ---
-
-func toolDefs() []map[string]any {
-	strProp := func(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-	obj := func(props map[string]any, required ...string) map[string]any {
-		return map[string]any{"type": "object", "properties": props, "required": required}
-	}
-	return []map[string]any{
-		{
-			"name":        "search_vault",
-			"description": "Semantic search over the shared second-brain vault (falls back to keyword when embeddings aren't configured). Returns matching notes with path, title, and a snippet.",
-			"inputSchema": obj(map[string]any{"query": strProp("What you're looking for — a phrase or question, not just keywords")}, "query"),
-		},
-		{
-			"name":        "read_note",
-			"description": "Read a note from the vault by its path (as returned by search_vault or write_note).",
-			"inputSchema": obj(map[string]any{"path": strProp("Vault-relative path, e.g. projects/2brain/foo-ab12cd.md")}, "path"),
-		},
-		{
-			"name":        "related_notes",
-			"description": "Find notes semantically related to a given note (nearest neighbours by meaning). Use after read_note to pull in adjacent context. Returns [] if semantic search isn't configured.",
-			"inputSchema": obj(map[string]any{"path": strProp("Vault-relative path of the note to find neighbours for")}, "path"),
-		},
-		{
-			"name":        "delete_note",
-			"description": "Delete a note from the vault by its path. The vault is git-backed, so deletions are recoverable from history. Use sparingly.",
-			"inputSchema": obj(map[string]any{"path": strProp("Vault-relative path of the note to delete")}, "path"),
-		},
-		{
-			"name":        "write_note",
-			"description": "Write a structured note into the vault (design idea, decision, code snippet, session memory), grouped under a project. Use this to share knowledge with the team's other agents.",
-			"inputSchema": obj(map[string]any{
-				"title":   strProp("Short note title"),
-				"body":    strProp("Markdown body"),
-				"kind":    strProp("OKF type, e.g. Design Decision, Memory, Snippet (default Note)"),
-				"project": strProp("Project to file under, e.g. 2brain"),
-				"tags":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Lowercase keyword tags"},
-			}, "title", "body"),
-		},
-		{
-			"name":        "project_index",
-			"description": "Read a project's index (the table of contents of its notes).",
-			"inputSchema": obj(map[string]any{"project": strProp("Project name, e.g. 2brain")}, "project"),
-		},
-	}
-}
-
-func toolsCall(params json.RawMessage) (any, *rpcError) {
-	var p struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &rpcError{Code: -32602, Message: "invalid params"}
-	}
-	text, err := runTool(p.Name, p.Arguments)
-	if err != nil {
-		return map[string]any{
-			"content": []map[string]any{{"type": "text", "text": "Error: " + err.Error()}},
-			"isError": true,
-		}, nil
-	}
-	return map[string]any{"content": []map[string]any{{"type": "text", "text": text}}}, nil
-}
-
-func runTool(name string, args json.RawMessage) (string, error) {
-	switch name {
-	case "search_vault":
-		var a struct {
-			Query string `json:"query"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Query == "" {
-			return "", fmt.Errorf("query is required")
-		}
-		return doSearch(a.Query)
-
-	case "read_note":
-		var a struct {
-			Path string `json:"path"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Path == "" {
-			return "", fmt.Errorf("path is required")
-		}
-		return doRead(a.Path)
-
-	case "related_notes":
-		var a struct {
-			Path string `json:"path"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Path == "" {
-			return "", fmt.Errorf("path is required")
-		}
-		return doRelated(a.Path)
-
-	case "delete_note":
-		var a struct {
-			Path string `json:"path"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Path == "" {
-			return "", fmt.Errorf("path is required")
-		}
-		return doDelete(a.Path)
-
-	case "write_note":
-		var a struct {
-			Title   string   `json:"title"`
-			Body    string   `json:"body"`
-			Kind    string   `json:"kind"`
-			Project string   `json:"project"`
-			Tags    []string `json:"tags"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Title == "" || a.Body == "" {
-			return "", fmt.Errorf("title and body are required")
-		}
-		return doWrite(a.Title, a.Body, a.Kind, a.Project, a.Tags)
-
-	case "project_index":
-		var a struct {
-			Project string `json:"project"`
-		}
-		json.Unmarshal(args, &a)
-		if a.Project == "" {
-			return "", fmt.Errorf("project is required")
-		}
-		return doRead("projects/" + slugify(a.Project) + "/index.md")
-
-	default:
-		return "", fmt.Errorf("unknown tool: %s", name)
-	}
-}
-
-func doSearch(q string) (string, error) {
+func (httpBackend) Search(_ context.Context, q string) ([]mcp.SearchHit, error) {
 	body, code, err := apiGet("/v1/search?q=" + url.QueryEscape(q))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if code != http.StatusOK {
-		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
+		return nil, backendErr(code, body)
 	}
 	var hits []struct {
 		Path    string `json:"path"`
@@ -274,52 +91,23 @@ func doSearch(q string) (string, error) {
 		Snippet string `json:"snippet"`
 	}
 	json.Unmarshal(body, &hits)
-	if len(hits) == 0 {
-		return "No matches.", nil
+	out := make([]mcp.SearchHit, len(hits))
+	for i, h := range hits {
+		out[i] = mcp.SearchHit{Path: h.Path, Title: h.Title, Snippet: h.Snippet}
 	}
-	var b strings.Builder
-	for _, h := range hits {
-		fmt.Fprintf(&b, "- %s  (%s)\n  %s\n", h.Title, h.Path, h.Snippet)
-	}
-	return b.String(), nil
+	return out, nil
 }
 
-func doRelated(path string) (string, error) {
-	body, code, err := apiGet("/v1/related?path=" + url.QueryEscape(path))
-	if err != nil {
-		return "", err
-	}
-	if code == http.StatusNotFound {
-		return "Not found: " + path, nil
-	}
-	if code != http.StatusOK {
-		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
-	}
-	var hits []struct {
-		Path  string `json:"path"`
-		Title string `json:"title"`
-	}
-	json.Unmarshal(body, &hits)
-	if len(hits) == 0 {
-		return "No related notes (semantic search may be disabled).", nil
-	}
-	var b strings.Builder
-	for _, h := range hits {
-		fmt.Fprintf(&b, "- %s  (%s)\n", h.Title, h.Path)
-	}
-	return b.String(), nil
-}
-
-func doRead(path string) (string, error) {
+func (httpBackend) Read(_ context.Context, path string) (string, error) {
 	body, code, err := apiGet("/v1/notes/" + path)
 	if err != nil {
 		return "", err
 	}
 	if code == http.StatusNotFound {
-		return "Not found: " + path, nil
+		return "", mcp.ErrNotFound
 	}
 	if code != http.StatusOK {
-		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
+		return "", backendErr(code, body)
 	}
 	var r struct {
 		Content string `json:"content"`
@@ -328,35 +116,62 @@ func doRead(path string) (string, error) {
 	return r.Content, nil
 }
 
-func doWrite(title, body, kind, project string, tags []string) (string, error) {
+func (httpBackend) Related(_ context.Context, path string) ([]mcp.RelatedHit, error) {
+	body, code, err := apiGet("/v1/related?path=" + url.QueryEscape(path))
+	if err != nil {
+		return nil, err
+	}
+	if code == http.StatusNotFound {
+		return nil, mcp.ErrNotFound
+	}
+	if code != http.StatusOK {
+		return nil, backendErr(code, body)
+	}
+	var hits []struct {
+		Path  string `json:"path"`
+		Title string `json:"title"`
+	}
+	json.Unmarshal(body, &hits)
+	out := make([]mcp.RelatedHit, len(hits))
+	for i, h := range hits {
+		out[i] = mcp.RelatedHit{Path: h.Path, Title: h.Title}
+	}
+	return out, nil
+}
+
+func (httpBackend) Write(_ context.Context, in mcp.WriteInput) (string, error) {
 	resp, code, err := apiPost("/v1/notes", map[string]any{
-		"title": title, "body": body, "kind": kind, "project": project, "tags": tags,
+		"title": in.Title, "body": in.Body, "kind": in.Kind, "project": in.Project, "tags": in.Tags,
 	})
 	if err != nil {
 		return "", err
 	}
 	if code != http.StatusCreated && code != http.StatusOK {
-		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(resp)))
+		return "", backendErr(code, resp)
 	}
 	var r struct {
 		Path string `json:"path"`
 	}
 	json.Unmarshal(resp, &r)
-	return "Wrote note: " + r.Path, nil
+	return r.Path, nil
 }
 
-func doDelete(path string) (string, error) {
+func (httpBackend) Delete(_ context.Context, path string) error {
 	body, code, err := apiDelete("/v1/notes/" + path)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if code == http.StatusNotFound {
-		return "Not found: " + path, nil
+		return mcp.ErrNotFound
 	}
 	if code != http.StatusNoContent && code != http.StatusOK {
-		return "", fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
+		return backendErr(code, body)
 	}
-	return "Deleted note: " + path, nil
+	return nil
+}
+
+func backendErr(code int, body []byte) error {
+	return fmt.Errorf("backend %d: %s", code, strings.TrimSpace(string(body)))
 }
 
 // --- HTTP helpers ---
@@ -398,24 +213,4 @@ func do(req *http.Request) ([]byte, int, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	return body, resp.StatusCode, nil
-}
-
-// slugify mirrors the backend's project slug so project_index resolves the right
-// directory.
-func slugify(s string) string {
-	var b strings.Builder
-	lastHyphen := false
-	for _, r := range strings.TrimSpace(s) {
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			b.WriteRune(unicode.ToLower(r))
-			lastHyphen = false
-		default:
-			if b.Len() > 0 && !lastHyphen {
-				b.WriteByte('-')
-				lastHyphen = true
-			}
-		}
-	}
-	return strings.Trim(b.String(), "-")
 }

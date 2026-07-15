@@ -18,7 +18,7 @@
 - **Files everything as [OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) Markdown** into a git-backed vault: YAML frontmatter, auto-generated `index.md` per directory, and per-tag hub pages for an Obsidian-navigable graph.
 - **Semantic search + related notes** — every note is embedded (via OpenRouter); `/v1/search` ranks by meaning, `/v1/related` surfaces nearest neighbours, and each note gets an auto-generated `[[related]]` link block (Obsidian-navigable). Falls back to keyword search when no key is set, so it works either way.
 - **Built-in web UI** — a zero-install, dark-mode-first browser UI is served right from the backend at `/`: capture, watch jobs get filed, and search your vault. No extra service, no separate deploy (see [Web UI](#web-ui)).
-- **Shared with agents over MCP** — a stdio server lets Claude Code, Cursor, and friends read/write the same vault, so a team on different harnesses contributes to one brain.
+- **Shared with agents over MCP** — a **remote** [MCP](https://modelcontextprotocol.io) endpoint (Streamable HTTP + OAuth 2.1) lets Claude Code, Cursor, Claude Desktop/web, and friends connect with just a URL and read/write the same vault; a stdio server is there too. A team on different harnesses contributes to one brain (see [MCP server](#mcp-server--share-the-vault-with-any-agent)).
 - **Durable by design** — a single-writer goroutine owns all disk + git mutations (atomic writes, debounced commits, `rebase`-before-push, crash-recovery commit on boot).
 
 ## Architecture
@@ -37,8 +37,9 @@ flowchart LR
     V --> G[(git remote<br/>optional)]
     V --> E[embed → vectors<br/>SQLite]
     C -->|/v1/search · /v1/related| E
-    C -->|MCP| M[cmd/mcp stdio server]
-    M --> C
+    C -->|MCP over HTTP<br/>OAuth 2.1| M[/mcp Streamable HTTP]
+    C -->|MCP over stdio| S[cmd/mcp bridge]
+    M & S --> V
 ```
 
 ## Get started
@@ -132,6 +133,11 @@ The [GoBrain app](#gobrain-mobile-app) (iOS/Android) connects to the same backen
 | POST   | `/v1/tokens`      | admin  | mint a token (`{label, role?}`) + join link |
 | GET    | `/v1/tokens`      | admin  | list tokens (no secrets)                  |
 | DELETE | `/v1/tokens/{id}` | admin  | revoke a token                            |
+| POST · GET · DELETE | `/mcp`  | MCP token | **remote MCP** (Streamable HTTP); OAuth or bearer |
+| GET    | `/.well-known/oauth-*` | none | OAuth 2.1 discovery metadata (RFC 9728 / 8414) |
+| POST   | `/oauth/register` | none  | dynamic client registration (RFC 7591)    |
+| —      | `/oauth/authorize`| none  | consent page (paste a token to authorize) |
+| POST   | `/oauth/token`    | none  | authorization-code / refresh-token exchange (PKCE) |
 
 **Roles.** `member` = any valid token (capture + read). `admin` = also mint/list/revoke. The first token (`server mint` or `BOOTSTRAP_ADMIN_LABEL`) is admin.
 
@@ -165,37 +171,46 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 
 ## MCP server — share the vault with any agent
 
-`cmd/mcp` is a stdio [MCP](https://modelcontextprotocol.io) server: a thin, token-authed client over the backend so any MCP-capable agent contributes to one vault with consistent OKF structure, indexes, and git.
+Any MCP-capable agent (Claude Code, Cursor, Claude Desktop/web, …) can read and write the same vault with consistent OKF structure, indexes, and git. The tool surface is identical across both transports below:
 
 **Tools:** `search_vault` · `read_note` · `related_notes` · `write_note` · `delete_note` · `project_index`
 
-It's a **local (stdio)** server that Claude launches as a process — it doesn't auto-detect anything, so you point it at **your** backend with two env vars: `SECONDBRAIN_URL` (your backend's URL) and `SECONDBRAIN_TOKEN` (a token you mint). Three one-time steps:
+### Remote (add by URL — recommended)
 
-**1. Build the binary** (needs Go + this repo):
+The backend serves MCP over **Streamable HTTP** at `/mcp`, fronted by a built-in **OAuth 2.1** server — so an agent connects with **just your backend's URL**, no local build. On first connect the agent discovers the auth server, self-registers, and opens a browser consent page; you **paste a GoBrain token once** to authorize (that's the login — GoBrain has no accounts), and the agent stores a refreshing access token from then on.
+
+*Claude Code:*
 ```bash
-go build -o secondbrain-mcp ./cmd/mcp
+claude mcp add --transport http gobrain https://your-backend.up.railway.app/mcp
+# then run any command; Claude opens the browser to authorize on first use
 ```
 
-**2. Mint a token** — from the web UI (**Invite a teammate**) or the admin API:
-```bash
-curl -X POST https://your-backend.up.railway.app/v1/tokens \
-  -H "Authorization: Bearer <YOUR_ADMIN_TOKEN>" \
-  -H "Content-Type: application/json" -d '{"label":"mcp"}'
-# → { "token": "<use this>", ... }
-```
+*Claude Desktop / web* — **Settings → Connectors → Add custom connector**, paste `https://your-backend.up.railway.app/mcp`, and complete the browser consent.
 
-**3. Register it with Claude.**
+The paste-a-token step needs a token from the web UI (**Invite a teammate**) or the admin API — the same tokens everything else uses. A whole team onboards by each pasting their own token once; notes they write are attributed to that token's label.
 
-*Claude Code* — one command (`--scope user` makes it available in every project):
+> **Prefer a header instead of the browser flow?** The same `/mcp` endpoint also accepts a plain minted token directly, no OAuth round-trip:
+> ```bash
+> claude mcp add --transport http gobrain https://your-backend.up.railway.app/mcp \
+>   --header "Authorization: Bearer <a token you mint>"
+> ```
+
+### Local (stdio)
+
+`cmd/mcp` is the original **stdio** server — a thin, token-authed client over the backend. Useful when you'd rather run a local process than authorize over the network (or to point at a backend without a public URL). Point it at **your** backend with `SECONDBRAIN_URL` + `SECONDBRAIN_TOKEN`:
+
+**1. Build the binary** (needs Go + this repo): `go build -o secondbrain-mcp ./cmd/mcp`
+
+**2. Mint a token** — web UI (**Invite a teammate**) or `POST /v1/tokens`.
+
+**3. Register it:**
 ```bash
 claude mcp add gobrain --scope user \
   -e SECONDBRAIN_URL=https://your-backend.up.railway.app \
   -e SECONDBRAIN_TOKEN=<the token from step 2> \
   -- /absolute/path/to/secondbrain-mcp
 ```
-Then `claude mcp list` to confirm it's connected. Everything after `--` is the launch command; the `-e` values are the only place your URL and token live.
-
-*Claude Desktop* — add to `claude_desktop_config.json` (Settings → Developer → Edit Config) and restart:
+Or in Claude Desktop's `claude_desktop_config.json` (Settings → Developer → Edit Config):
 ```json
 {
   "mcpServers": {
@@ -209,8 +224,6 @@ Then `claude mcp list` to confirm it's connected. Everything after `--` is the l
   }
 }
 ```
-
-> **No paste-a-URL connector yet.** Because this is a stdio server, each user builds the binary and supplies their own URL + token — there's no auto-discovery. A one-click remote connector (add by URL, no local build) would need the MCP served over HTTP from the backend; not there yet.
 
 ## GoBrain mobile app
 
@@ -231,8 +244,9 @@ The backend already gives you a browser UI and a git-synced vault. The **GoBrain
 
 ```
 cmd/server/main.go     boot, graceful shutdown, `mint`, first-boot bootstrap
-cmd/mcp/main.go        stdio MCP server (wraps the backend for any agent)
-internal/api/          chi router, bearer-auth middleware, handlers
+cmd/mcp/main.go        stdio MCP transport (HTTP-backed, for local launches)
+internal/mcp/          transport-agnostic MCP core: tool schemas + JSON-RPC dispatch
+internal/api/          chi router, bearer-auth middleware, handlers, /mcp + OAuth 2.1
 internal/web/          built-in htmx web UI (embedded templates + assets)
 internal/store/        SQLite: jobs, hashed tokens (roles), embeddings, worker pool
 internal/ingest/       ProcessJob: article/youtube/image/thought extraction + chunking

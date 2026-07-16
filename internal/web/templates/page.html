@@ -56,7 +56,7 @@
     <section id="app">
       <section class="capture">
         <form class="composer capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
-              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';}">
+              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';window.gbClearCaptureError();}">
           <textarea class="composer-input" name="payload" rows="1" required
                     placeholder="Paste a link, or type a thought…" autocomplete="off"></textarea>
           <input class="composer-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
@@ -144,8 +144,53 @@
       var t = token();
       if (t) e.detail.headers['Authorization'] = 'Bearer ' + t;
     });
+
+    // ---- capture/search failure feedback ----
+    function requestOrigin(elt) {
+      if (!elt || !elt.closest) return null;
+      if (elt.closest('.capture-form')) return 'capture';
+      if (elt.id === 'top-search-in' || elt.closest('.search-mobile')) return 'search';
+      return null;
+    }
+    // Pull a short, human error message out of a response body when there is
+    // one (handlers write plain text like "payload is required"); otherwise
+    // fall back to a generic message.
+    function humanText(xhr) {
+      var t = xhr && xhr.responseText ? xhr.responseText.trim() : '';
+      return (t && t.length <= 80 && t.indexOf('<') === -1) ? t : '';
+    }
+    window.gbShowCaptureError = function (msg) {
+      var el = document.getElementById('capture-error');
+      el.textContent = msg;
+      el.hidden = false;
+    };
+    window.gbClearCaptureError = function () {
+      var el = document.getElementById('capture-error');
+      el.hidden = true;
+      el.textContent = '';
+    };
+    function showSearchError(msg) {
+      var el = document.getElementById('search-results');
+      if (el) el.innerHTML = '<p class="empty err"></p>';
+      if (el) el.firstChild.textContent = msg;
+    }
     document.body.addEventListener('htmx:responseError', function (e) {
-      if (e.detail.xhr.status === 401) disconnect();
+      if (e.detail.xhr.status === 401) { disconnect(); return; }
+      var origin = requestOrigin(e.detail.elt);
+      var extra = humanText(e.detail.xhr);
+      if (origin === 'capture') {
+        window.gbShowCaptureError(extra ? "Couldn't capture — " + extra + '.' : "Couldn't capture — try again.");
+      } else if (origin === 'search') {
+        showSearchError(extra ? "Couldn't search — " + extra + '.' : "Couldn't search — try again.");
+      }
+    });
+    document.body.addEventListener('htmx:sendError', function (e) {
+      var origin = requestOrigin(e.detail.elt);
+      if (origin === 'capture') {
+        window.gbShowCaptureError("Couldn't capture — check your connection and try again.");
+      } else if (origin === 'search') {
+        showSearchError("Couldn't search — check your connection and try again.");
+      }
     });
 
     function refreshJobs() {

@@ -59,6 +59,7 @@ func NewRouter(jobQueue chan<- store.Job, backendURL string) *chi.Mux {
 		r.Use(AuthMiddleware)
 		r.Post("/ingest", webUI.Ingest)
 		r.Get("/jobs", webUI.Jobs)
+		r.Post("/retry", webUI.Retry)
 		r.Get("/search", webUI.Search)
 		r.Get("/note", webUI.Note)
 	})

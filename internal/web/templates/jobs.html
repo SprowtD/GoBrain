@@ -24,6 +24,9 @@
       {{- if and (eq .Status "filed") .OutputPath}}
       <button class="link" hx-get="/ui/note?path={{.OutputPath | urlquery}}" hx-target="#note-panel" hx-swap="innerHTML">open</button>
       {{- end}}
+      {{- if eq .Status "misfiled"}}
+      <button class="link" hx-post="/ui/retry" hx-vals='{"id":"{{.ID}}"}' hx-target="#jobs" hx-swap="innerHTML">retry</button>
+      {{- end}}
     </div>
   </li>
   {{- end }}

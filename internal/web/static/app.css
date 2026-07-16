@@ -343,6 +343,7 @@ button { font-family: system-ui, sans-serif; cursor: pointer; }
 .hit-path { font-family: ui-monospace, monospace; font-size: 0.68rem; color: var(--ink-faint); margin-top: 5px; overflow-wrap: anywhere; }
 
 .empty { color: var(--ink-soft); font-size: 0.9rem; margin: 8px 0; }
+.empty.err { color: var(--coral); }
 
 /* ---- note read panel ---- */
 .note-panel {

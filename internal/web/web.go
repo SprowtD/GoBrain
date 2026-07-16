@@ -98,6 +98,40 @@ func (h *Handler) Jobs(w http.ResponseWriter, _ *http.Request) {
 	h.renderJobs(w)
 }
 
+// Retry re-queues a misfiled job's original capture with force semantics (the
+// same content-hash dedup that normally collapses a re-submit onto the
+// existing job is deliberately bypassed — that's the whole point of a retry).
+// It mirrors the "force":true path of /v1/ingest, just scoped to one job's
+// already-known kind/payload/note instead of taking a fresh request body.
+func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	if id == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	orig, err := store.GetJob(id)
+	if err != nil {
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	job, err := store.CreateJob(orig.SourceKind, orig.Payload, orig.Note, orig.TokenLabel)
+	if err != nil {
+		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		return
+	}
+	select {
+	case h.queue <- job:
+	default:
+	}
+
+	h.renderJobs(w)
+}
+
 type jobsView struct {
 	Jobs     []store.Job
 	Filed    int

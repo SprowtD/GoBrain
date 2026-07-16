@@ -11,7 +11,9 @@ package web
 
 import (
 	"embed"
+	"encoding/base64"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -56,21 +58,39 @@ func (h *Handler) Page(w http.ResponseWriter, _ *http.Request) {
 	render(w, "page.html", nil)
 }
 
+// maxImageUploadBytes caps a web-UI image upload. Enforced twice: as a body
+// ceiling on the whole request (parseUpload) and again on the bytes actually
+// read from the file field, so a mismatched Content-Length can't slip past it.
+const maxImageUploadBytes = 10 << 20 // 10 MB
+
 // Ingest queues a capture job and returns the refreshed job list fragment so the
 // new row appears immediately. source_kind "auto" (or empty) is detected from
-// the payload, matching the mobile app's behaviour.
+// the payload, matching the mobile app's behaviour. Requests encoded as
+// multipart/form-data (the composer's Attach flow) may carry a "file" field
+// instead of — or alongside — the payload text.
 func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
+	var payload, note, kind, title string
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		p, n, k, t, ok := h.parseUpload(w, r)
+		if !ok {
+			return // parseUpload already wrote the error response
+		}
+		payload, note, kind, title = p, n, k, t
+	} else {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		payload = strings.TrimSpace(r.FormValue("payload"))
+		note = strings.TrimSpace(r.FormValue("note"))
+		kind = r.FormValue("source_kind")
 	}
-	payload := strings.TrimSpace(r.FormValue("payload"))
+
 	if payload == "" {
-		http.Error(w, "payload is required", http.StatusBadRequest)
+		http.Error(w, "payload or file is required", http.StatusBadRequest)
 		return
 	}
-	note := strings.TrimSpace(r.FormValue("note"))
-	kind := r.FormValue("source_kind")
 	if kind == "" || kind == "auto" {
 		kind = detectKind(payload)
 	}
@@ -79,6 +99,13 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
+	}
+	// An uploaded image's payload is a giant base64 data: URL — never worth
+	// showing in the jobs list. Give it the filename as a display title
+	// instead (only for the fresh job; a duplicate keeps whatever title the
+	// original capture already has).
+	if title != "" && !duplicate {
+		_ = store.SetJobTitle(job.ID, title)
 	}
 	// Non-blocking enqueue: mirror the JSON handler's load-shedding. The row
 	// stays 'queued' if the buffer is full. A duplicate capture is collapsed onto
@@ -91,6 +118,56 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.renderJobs(w)
+}
+
+// parseUpload handles a multipart capture: the same payload/note/source_kind
+// fields as a plain form post, plus an optional "file" field for an uploaded
+// image. A file always wins the source kind (image) and becomes the payload
+// as a base64 data: URL — the same format the mobile app already sends for
+// shared photos, so it flows through the existing image pipeline (HEIC
+// handling, vision call, vault asset storage) with no parallel code path. ok
+// is false once parseUpload has already written an error response.
+func (h *Handler) parseUpload(w http.ResponseWriter, r *http.Request) (payload, note, kind, title string, ok bool) {
+	// A generous margin over the image cap covers the other form fields
+	// (payload/note/kind, and multipart boundary overhead) without allowing a
+	// second image-sized field to smuggle past the check below.
+	r.Body = http.MaxBytesReader(w, r.Body, maxImageUploadBytes+1<<20)
+	if err := r.ParseMultipartForm(maxImageUploadBytes); err != nil {
+		http.Error(w, "upload too large (max 10MB) or invalid form", http.StatusRequestEntityTooLarge)
+		return "", "", "", "", false
+	}
+
+	note = strings.TrimSpace(r.FormValue("note"))
+	kind = r.FormValue("source_kind")
+	payload = strings.TrimSpace(r.FormValue("payload"))
+
+	file, header, ferr := r.FormFile("file")
+	if ferr != nil {
+		// No file attached — htmx sends multipart once the form has a file
+		// input regardless of whether one was actually chosen, so this is the
+		// common "just text" case, not an error.
+		return payload, note, kind, "", true
+	}
+	defer file.Close()
+
+	ctype := header.Header.Get("Content-Type")
+	if !strings.HasPrefix(strings.ToLower(ctype), "image/") {
+		http.Error(w, "only image files are supported", http.StatusBadRequest)
+		return "", "", "", "", false
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxImageUploadBytes+1))
+	if err != nil {
+		http.Error(w, "failed to read upload", http.StatusBadRequest)
+		return "", "", "", "", false
+	}
+	if len(data) > maxImageUploadBytes {
+		http.Error(w, "file too large (max 10MB)", http.StatusRequestEntityTooLarge)
+		return "", "", "", "", false
+	}
+
+	payload = "data:" + ctype + ";base64," + base64.StdEncoding.EncodeToString(data)
+	return payload, note, "image", header.Filename, true
 }
 
 // Jobs renders the recent-jobs fragment (polled by the page).

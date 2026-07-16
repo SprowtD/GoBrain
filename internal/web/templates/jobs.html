@@ -12,7 +12,7 @@
   <li class="job">
     <span class="kindtile {{.SourceKind}}" aria-hidden="true">{{template "kindicon" .SourceKind}}</span>
     <div class="job-body">
-      <div class="job-title">{{.Payload}}</div>
+      <div class="job-title">{{if .Title}}{{.Title}}{{else}}{{.Payload}}{{end}}</div>
       <div class="job-sub">
         {{- .SourceKind -}}
         {{- if .Note}} · {{.Note}}{{end -}}

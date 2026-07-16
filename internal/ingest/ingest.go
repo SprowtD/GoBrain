@@ -29,7 +29,7 @@ func ProcessJob(job store.Job) {
 
 	_ = store.UpdateJobStatus(job.ID, "reading", "")
 
-	files, err := build(ctx, job)
+	files, title, err := build(ctx, job)
 	if err != nil {
 		log.Printf("ingest %s [%s]: ✗ FAILED: %v", short, job.SourceKind, err)
 		_ = store.UpdateJobStatus(job.ID, "misfiled", err.Error())
@@ -45,8 +45,9 @@ func ProcessJob(job store.Job) {
 		vault.Write(vault.WriteRequest{RelPath: f.RelPath, Content: f.Content})
 	}
 
-	// Point the job at its first file so /status links somewhere openable.
-	if err := store.CompleteJob(job.ID, files[0].RelPath); err != nil {
+	// Point the job at its first file so /status links somewhere openable, and
+	// record the item's title so the jobs UI shows it instead of a raw payload.
+	if err := store.CompleteJob(job.ID, files[0].RelPath, title); err != nil {
 		log.Printf("ingest %s [%s]: ✗ FAILED (status write): %v", short, job.SourceKind, err)
 		_ = store.UpdateJobStatus(job.ID, "misfiled", err.Error())
 		return
@@ -67,7 +68,9 @@ func previewPayload(p string) string {
 	return p
 }
 
-func build(ctx context.Context, job store.Job) ([]outFile, error) {
+// build returns the rendered files plus the item's title (for the jobs UI and
+// CompleteJob's display label) — every branch computes one anyway.
+func build(ctx context.Context, job store.Job) ([]outFile, string, error) {
 	switch job.SourceKind {
 	case "article":
 		return buildArticle(ctx, job)
@@ -76,53 +79,54 @@ func build(ctx context.Context, job store.Job) ([]outFile, error) {
 	case "image":
 		return buildImage(ctx, job)
 	case "thought":
-		return buildThought(job), nil
+		title := firstLine(job.Payload)
+		return buildThought(job), title, nil
 	default:
-		return nil, fmt.Errorf("unsupported source_kind %q", job.SourceKind)
+		return nil, "", fmt.Errorf("unsupported source_kind %q", job.SourceKind)
 	}
 }
 
-func buildArticle(ctx context.Context, job store.Job) ([]outFile, error) {
+func buildArticle(ctx context.Context, job store.Job) ([]outFile, string, error) {
 	art, err := fetchArticle(ctx, job.Payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	chunks, model := chunkText(ctx, art.Title, art.Text)
-	return renderChunksToFiles(job, art.Title, art.URL, art.Site, art.Byline, model, chunks), nil
+	return renderChunksToFiles(job, art.Title, art.URL, art.Site, art.Byline, model, chunks), art.Title, nil
 }
 
-func buildYouTube(ctx context.Context, job store.Job) ([]outFile, error) {
+func buildYouTube(ctx context.Context, job store.Job) ([]outFile, string, error) {
 	yt, err := fetchYouTube(ctx, job.Payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	chunks, model := chunkText(ctx, yt.Title, yt.Transcript)
-	return renderChunksToFiles(job, yt.Title, yt.URL, "YouTube", yt.Uploader, model, chunks), nil
+	return renderChunksToFiles(job, yt.Title, yt.URL, "YouTube", yt.Uploader, model, chunks), yt.Title, nil
 }
 
-func buildImage(ctx context.Context, job store.Job) ([]outFile, error) {
+func buildImage(ctx context.Context, job store.Job) ([]outFile, string, error) {
 	img, err := normalizeImagePayload(job.Payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	c := client()
 	if !c.Available() {
-		return nil, fmt.Errorf("image ingestion needs OPENROUTER_API_KEY (vision model)")
+		return nil, "", fmt.Errorf("image ingestion needs OPENROUTER_API_KEY (vision model)")
 	}
 
 	// iPhones shoot HEIC by default, which vision models reject; transcode
 	// those to an inline JPEG data URL (jpg carries the bytes to the vault).
 	visionRef, jpg, err := prepareVisionImage(ctx, img)
 	if err != nil {
-		return nil, fmt.Errorf("prepare image: %w", err)
+		return nil, "", fmt.Errorf("prepare image: %w", err)
 	}
 
 	raw, err := c.CompleteVision(ctx, imageSystemPrompt, imageUserPrompt, visionRef)
 	if err != nil {
-		return nil, fmt.Errorf("vision model: %w", err)
+		return nil, "", fmt.Errorf("vision model: %w", err)
 	}
 	if strings.TrimSpace(raw) == "" {
-		return nil, fmt.Errorf("vision model returned no text")
+		return nil, "", fmt.Errorf("vision model returned no text")
 	}
 
 	chunks, chunkModel := chunkText(ctx, "", raw)
@@ -145,7 +149,7 @@ func buildImage(ctx context.Context, job store.Job) ([]outFile, error) {
 	if asset != nil {
 		files = append(files, *asset)
 	}
-	return files, nil
+	return files, title, nil
 }
 
 // storeImageAsset downloads/decodes the source image, prepends an embed to the

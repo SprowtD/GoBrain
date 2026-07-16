@@ -17,10 +17,15 @@ type Job struct {
 	Error      string
 	OutputPath string
 	TokenLabel string
+	// Title is a human-friendly display label: the uploaded filename for an
+	// image before it files, then the note's own title once it does. Empty
+	// unless explicitly set (SetJobTitle, or CompleteJob at filing time) — the
+	// UI falls back to Payload when it's blank.
+	Title string
 }
 
 const jobCols = `id, source_kind, payload, COALESCE(note,''), status,
-	COALESCE(error,''), COALESCE(output_path,''), COALESCE(token_label,'')`
+	COALESCE(error,''), COALESCE(output_path,''), COALESCE(token_label,''), COALESCE(title,'')`
 
 // dedupeStatuses are the job states that count as "we already have this capture":
 // in flight (queued/reading) or successfully filed. A prior 'misfiled' attempt is
@@ -133,13 +138,23 @@ func UpdateJobStatus(id, status, errMsg string) error {
 	return err
 }
 
-// CompleteJob marks a job filed with the path of its last written chunk.
-func CompleteJob(id, outputPath string) error {
+// CompleteJob marks a job filed with the path of its last written chunk and
+// the item's title (overwriting any upload-time title, e.g. a filename) so
+// the jobs UI can show a meaningful name instead of a raw payload.
+func CompleteJob(id, outputPath, title string) error {
 	_, err := db.Exec(
-		`UPDATE jobs SET status = 'filed', output_path = ?, error = NULL,
+		`UPDATE jobs SET status = 'filed', output_path = ?, title = ?, error = NULL,
 		 updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		outputPath, id,
+		outputPath, nullIfEmpty(title), id,
 	)
+	return err
+}
+
+// SetJobTitle sets a job's display title without touching its status — used
+// right after creating an uploaded-image job so the row shows the original
+// filename instead of a giant base64 payload while it's still queued/reading.
+func SetJobTitle(id, title string) error {
+	_, err := db.Exec(`UPDATE jobs SET title = ? WHERE id = ?`, nullIfEmpty(title), id)
 	return err
 }
 
@@ -150,7 +165,7 @@ type rowScanner interface {
 func scanJob(s rowScanner) (Job, error) {
 	var j Job
 	err := s.Scan(&j.ID, &j.SourceKind, &j.Payload, &j.Note,
-		&j.Status, &j.Error, &j.OutputPath, &j.TokenLabel)
+		&j.Status, &j.Error, &j.OutputPath, &j.TokenLabel, &j.Title)
 	return j, err
 }
 

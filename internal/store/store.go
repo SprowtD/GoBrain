@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 	output_path  TEXT,
 	token_label  TEXT,
 	content_hash TEXT,
+	title        TEXT,
 	created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -125,6 +126,16 @@ CREATE INDEX IF NOT EXISTS idx_oauth_tokens_refresh ON oauth_tokens(refresh_hash
 	}
 	if _, err := conn.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_content_hash ON jobs(content_hash)`); err != nil {
 		return err
+	}
+
+	// Migration: add title for DBs created before it existed. It holds a
+	// human-friendly display label — the uploaded filename for an image before
+	// it's filed, then the note's own title once filing completes — so the
+	// jobs UI never has to render a raw base64 payload or a bare URL.
+	if !columnExists(conn, "jobs", "title") {
+		if _, err := conn.Exec(`ALTER TABLE jobs ADD COLUMN title TEXT`); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -2,10 +2,10 @@
 {{- if not .Jobs -}}
 <p class="empty">No captures yet. Paste a link or jot a thought above.</p>
 {{- else -}}
-<div class="summary">
-  <div class="stat"><div class="n">{{.Filed}}</div><div class="l">Filed</div></div>
-  <div class="stat hot"><div class="n">{{.Active}}</div><div class="l">Filing</div></div>
-  <div class="stat bad"><div class="n">{{.Misfiled}}</div><div class="l">Misfiled</div></div>
+<div class="counts">
+  <span><b>{{.Filed}}</b> filed</span>
+  <span class="hot"><b>{{.Active}}</b> filing</span>
+  <span class="bad"><b>{{.Misfiled}}</b> misfiled</span>
 </div>
 <ul class="jobs">
   {{- range .Jobs }}

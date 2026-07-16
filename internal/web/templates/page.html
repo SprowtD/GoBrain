@@ -21,13 +21,21 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">Go<span class="brand-accent">Brain</span></span>
     </div>
+    <div class="top-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="top-search-in" type="search" name="q" placeholder="Search your vault…" autocomplete="off"
+             hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
+             hx-trigger="input changed delay:400ms, search">
+      <span class="kbd" aria-hidden="true">⌘K</span>
+    </div>
     <div class="topbar-right">
-      <span class="conn">
+      <span class="conn hide-sm">
         <span class="conn-dot" aria-hidden="true"></span>
         <span class="conn-label">connected</span>
       </span>
-      <button class="ghost conn" onclick="gbOpenLink()">Link phone</button>
+      <button class="ghost conn hide-sm" onclick="gbOpenLink()">Link phone</button>
       <div class="theme-toggle" role="group" aria-label="Theme">
+        <button id="th-auto" aria-pressed="false" onclick="gbTheme('auto')">Auto</button>
         <button id="th-dark" aria-pressed="false" onclick="gbTheme('dark')">Dark</button>
         <button id="th-light" aria-pressed="false" onclick="gbTheme('light')">Light</button>
       </div>
@@ -46,42 +54,46 @@
     </section>
 
     <section id="app">
-      <section class="panel capture">
-        <h2 class="panel-h">Capture</h2>
-        <form class="capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
-              hx-on::after-request="if(event.detail.successful) this.reset()">
-          <div class="chips" id="kind-chips">
-            <label class="chip active"><input type="radio" name="source_kind" value="auto" checked hidden>Auto</label>
-            <label class="chip"><input type="radio" name="source_kind" value="article" hidden>Article</label>
-            <label class="chip"><input type="radio" name="source_kind" value="youtube" hidden>YouTube</label>
-            <label class="chip"><input type="radio" name="source_kind" value="image" hidden>Image</label>
-            <label class="chip"><input type="radio" name="source_kind" value="thought" hidden>Thought</label>
-          </div>
-          <input class="capture-payload" name="payload" required
-                 placeholder="Paste a link, or type a thought…" autocomplete="off">
-          <div class="capture-row">
-            <input class="capture-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
-            <button class="primary" type="submit">Capture</button>
+      <section class="capture">
+        <form class="composer capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';}">
+          <textarea class="composer-input" name="payload" rows="1" required
+                    placeholder="Paste a link, or type a thought…" autocomplete="off"></textarea>
+          <input class="composer-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
+          <p id="capture-error" class="form-error" hidden></p>
+          <div class="composer-bar">
+            <div class="seg" id="kind-seg" role="radiogroup" aria-label="Source kind">
+              <label><input class="visually-hidden" type="radio" name="source_kind" value="auto" checked>Auto</label>
+              <label><input class="visually-hidden" type="radio" name="source_kind" value="article">Article</label>
+              <label><input class="visually-hidden" type="radio" name="source_kind" value="youtube">YouTube</label>
+              <label><input class="visually-hidden" type="radio" name="source_kind" value="image">Image</label>
+              <label><input class="visually-hidden" type="radio" name="source_kind" value="thought">Thought</label>
+            </div>
+            <button class="primary" type="submit">Capture <span class="kbd" aria-hidden="true">↵</span></button>
           </div>
         </form>
       </section>
 
-      <section class="panel search">
-        <h2 class="panel-h">Search</h2>
-        <input class="search-input mono" type="search" name="q" placeholder="Search your vault…"
-               hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
-               hx-trigger="input changed delay:400ms, search">
-        <div id="search-results"></div>
-      </section>
-
-      <section class="panel library">
-        <div class="library-head">
-          <h2 class="panel-h">Library</h2>
+      <section class="library">
+        <div class="sect">
+          <h2>Library</h2>
           <button class="ghost" onclick="gbRefresh()">refresh</button>
         </div>
         <div id="jobs">
           <p class="empty">Loading…</p>
         </div>
+      </section>
+
+      <section class="search">
+        <div class="sect">
+          <h2>Search</h2>
+        </div>
+        <div class="search-mobile">
+          <input type="search" name="q" placeholder="Search your vault…" autocomplete="off"
+                 hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
+                 hx-trigger="input changed delay:400ms, search">
+        </div>
+        <div id="search-results"></div>
       </section>
     </section>
   </main>
@@ -154,6 +166,29 @@
     window.gbRefresh = refreshJobs;
     window.gbCloseNote = function () { document.getElementById('note-panel').innerHTML = ''; };
 
+    // ---- composer: auto-grow + Enter submits (Shift+Enter for a newline) ----
+    var payload = document.querySelector('.composer-input');
+    payload.addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = this.scrollHeight + 'px';
+    });
+    payload.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.form.requestSubmit();
+      }
+    });
+
+    // ---- ⌘K / Ctrl+K focuses search ----
+    document.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        var tops = document.getElementById('top-search-in');
+        var target = tops && tops.offsetParent !== null ? tops : document.querySelector('.search-mobile input');
+        if (target) target.focus();
+      }
+    });
+
     // ---- Link your phone (QR of secondbrain://join) ----
     function buildJoin(url, t) {
       return 'secondbrain://join?url=' + encodeURIComponent(url) + '&token=' + encodeURIComponent(t);
@@ -220,26 +255,23 @@
         .finally(function () { btn.disabled = false; btn.textContent = old; });
     };
 
-    // Theme toggle
+    // Theme toggle: Auto follows the OS; Dark/Light pin an explicit choice.
     function paintTheme() {
-      var t = document.documentElement.getAttribute('data-theme');
-      var dark = t !== 'light';
-      document.getElementById('th-dark').setAttribute('aria-pressed', String(dark));
-      document.getElementById('th-light').setAttribute('aria-pressed', String(!dark));
+      var stored = localStorage.getItem('gobrain.theme');
+      document.getElementById('th-auto').setAttribute('aria-pressed', String(stored !== 'dark' && stored !== 'light'));
+      document.getElementById('th-dark').setAttribute('aria-pressed', String(stored === 'dark'));
+      document.getElementById('th-light').setAttribute('aria-pressed', String(stored === 'light'));
     }
     window.gbTheme = function (t) {
-      document.documentElement.setAttribute('data-theme', t);
-      localStorage.setItem('gobrain.theme', t);
+      if (t === 'dark' || t === 'light') {
+        document.documentElement.setAttribute('data-theme', t);
+        localStorage.setItem('gobrain.theme', t);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.removeItem('gobrain.theme');
+      }
       paintTheme();
     };
-
-    // Source-kind chips (radio-backed)
-    document.getElementById('kind-chips').addEventListener('click', function (e) {
-      var label = e.target.closest('.chip');
-      if (!label) return;
-      this.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('active'); });
-      label.classList.add('active');
-    });
 
     setInterval(refreshJobs, 4000);
     document.addEventListener('DOMContentLoaded', function () {

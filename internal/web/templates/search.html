@@ -6,9 +6,9 @@
 <ul class="hits">
   {{- range .Hits }}
   <li class="hit">
-    <button class="hit-title link" hx-get="/ui/note?path={{.Path | urlquery}}" hx-target="#note-panel" hx-swap="innerHTML">{{.Title}}</button>
+    <button class="hit-title link" {{if .Score}}title="relevance {{printf "%.2f" .Score}}" {{end}}hx-get="/ui/note?path={{.Path | urlquery}}" hx-target="#note-panel" hx-swap="innerHTML">{{.Title}}</button>
     {{- if .Snippet}}<div class="hit-snippet">{{.Snippet}}</div>{{end}}
-    {{- if .Score}}<span class="score mono">{{printf "%.2f" .Score}}</span>{{end}}
+    {{- if .Path}}<div class="hit-path">{{.Path}}</div>{{end}}
   </li>
   {{- end }}
 </ul>

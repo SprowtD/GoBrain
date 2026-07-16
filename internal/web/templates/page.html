@@ -56,10 +56,16 @@
     <section id="app">
       <section class="capture">
         <form class="composer capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
-              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';window.gbClearCaptureError();}">
+              hx-encoding="multipart/form-data"
+              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';window.gbClearCaptureError();window.gbClearAttachment();}">
           <textarea class="composer-input" name="payload" rows="1" required
                     placeholder="Paste a link, or type a thought…" autocomplete="off"></textarea>
           <input class="composer-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
+          <div id="attach-preview" class="attach-preview" hidden>
+            <img id="attach-thumb" class="attach-thumb" alt="">
+            <span id="attach-filename" class="attach-filename"></span>
+            <button type="button" class="attach-remove" onclick="window.gbClearAttachment()" aria-label="Remove attached image">×</button>
+          </div>
           <p id="capture-error" class="form-error" hidden></p>
           <div class="composer-bar">
             <div class="seg" id="kind-seg" role="radiogroup" aria-label="Source kind">
@@ -69,6 +75,11 @@
               <label><input class="visually-hidden" type="radio" name="source_kind" value="image">Image</label>
               <label><input class="visually-hidden" type="radio" name="source_kind" value="thought">Thought</label>
             </div>
+            <label class="attach" for="attach-file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M5 17l4.5-4.5L14 17l3-3 4 4"/></svg>
+              Attach
+            </label>
+            <input class="visually-hidden" type="file" id="attach-file" name="file" accept="image/*">
             <button class="primary" type="submit">Capture <span class="kbd" aria-hidden="true">↵</span></button>
           </div>
         </form>
@@ -221,6 +232,43 @@
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.form.requestSubmit();
+      }
+    });
+
+    // ---- Attach: image upload (file picker or paste) for the composer ----
+    var attachInput = document.getElementById('attach-file');
+    var attachPreview = document.getElementById('attach-preview');
+    var attachThumb = document.getElementById('attach-thumb');
+    var attachFilename = document.getElementById('attach-filename');
+    var imageRadio = document.querySelector('#kind-seg input[value="image"]');
+
+    function setAttachment(file) {
+      if (!file) { window.gbClearAttachment(); return; }
+      if (attachThumb.src) URL.revokeObjectURL(attachThumb.src);
+      attachThumb.src = URL.createObjectURL(file);
+      attachFilename.textContent = file.name;
+      attachPreview.hidden = false;
+      payload.required = false;
+      if (imageRadio) imageRadio.checked = true;
+    }
+    window.gbClearAttachment = function () {
+      attachInput.value = '';
+      if (attachThumb.src) { URL.revokeObjectURL(attachThumb.src); attachThumb.removeAttribute('src'); }
+      attachPreview.hidden = true;
+      payload.required = true;
+    };
+    attachInput.addEventListener('change', function () {
+      setAttachment(this.files && this.files[0]);
+    });
+    // Desktop convenience: paste an image straight into the payload field.
+    payload.addEventListener('paste', function (e) {
+      var files = e.clipboardData && e.clipboardData.files;
+      if (files && files.length && files[0].type.indexOf('image/') === 0) {
+        e.preventDefault();
+        var dt = new DataTransfer();
+        dt.items.add(files[0]);
+        attachInput.files = dt.files;
+        setAttachment(files[0]);
       }
     });
 

@@ -5,8 +5,9 @@
 **A self-hostable "second brain" backend.** Feed it YouTube links, articles, images, or raw thoughts — it runs an extract → chunk → enrich pipeline and files the results as clean Markdown into a **git-backed, semantically searchable vault** that any agent can read and write through MCP.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw)
+[![CI](https://github.com/SprowtD/GoBrain/actions/workflows/ci.yml/badge.svg)](https://github.com/SprowtD/GoBrain/actions/workflows/ci.yml)
 
-`Go 1.23` · `SQLite (pure-Go, no CGO)` · `OpenRouter` · `MCP` · single static binary
+`Go 1.25` · `SQLite (pure-Go, no CGO)` · `OpenRouter` · `MCP` · single static binary
 
 </div>
 
@@ -15,7 +16,7 @@
 ## What it does
 
 - **Ingests four source kinds** — articles (Readability), YouTube (yt-dlp captions → transcript), images (vision OCR, source image stored & embedded), and raw thoughts — on a bounded worker pool.
-- **Files everything as [OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) Markdown** into a git-backed vault: YAML frontmatter, auto-generated `index.md` per directory, and per-tag hub pages for an Obsidian-navigable graph.
+- **Files everything as [OKF](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) Markdown** (Markdown + YAML frontmatter — a vendor-neutral knowledge spec) into a git-backed vault: YAML frontmatter, auto-generated `index.md` per directory, and per-tag hub pages for an Obsidian-navigable graph.
 - **Semantic search + related notes** — every note is embedded (via OpenRouter); `/v1/search` ranks by meaning, `/v1/related` surfaces nearest neighbours, and each note gets an auto-generated `[[related]]` link block (Obsidian-navigable). Falls back to keyword search when no key is set, so it works either way.
 - **Built-in web UI** — a zero-install, dark-mode-first browser UI is served right from the backend at `/`: capture, watch jobs get filed, and search your vault. No extra service, no separate deploy (see [Web UI](#web-ui)).
 - **Shared with agents over MCP** — a **remote** [MCP](https://modelcontextprotocol.io) endpoint (Streamable HTTP + OAuth 2.1) lets Claude Code, Cursor, Claude Desktop/web, and friends connect with just a URL and read/write the same vault; a stdio server is there too. A team on different harnesses contributes to one brain (see [MCP server](#mcp-server--share-the-vault-with-any-agent)).
@@ -44,18 +45,12 @@ flowchart LR
 
 ## Get started
 
-**Two ways to run it:**
-
-- **Fastest — one-click deploy, nothing to install.** Hit the [**Deploy on Railway**](https://railway.com/deploy/hy7yIC?referralCode=r2pOPw) button; you only supply an `OPENROUTER_API_KEY`. Jump to [Deploy to Railway](#deploy-to-railway).
-- **Run it locally / hack on it.** You'll need a few things installed **first**:
-  - **[Go](https://go.dev/dl/) 1.23+** and **git** (required).
-  - **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** (`brew install yt-dlp`) — only if you want YouTube ingestion.
-  - An **[OpenRouter](https://openrouter.ai) API key** — optional; enables AI chunking, image OCR, and semantic search. Without one, GoBrain still runs and falls back to keyword search.
+- **Fastest — one-click deploy, nothing to install.** See [Deploy to Railway](#deploy-to-railway).
+- **Run it locally / hack on it.** You'll need **[Go](https://go.dev/dl/) 1.25+** and **git** (required), plus optionally **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** (`brew install yt-dlp`) for YouTube and an **[OpenRouter](https://openrouter.ai) API key** for AI chunking/OCR/semantic search (falls back to keyword search without one). See [Quickstart (local)](#quickstart-local).
 
 ## Quickstart (local)
 
 ```bash
-go mod tidy
 cp .env.example .env        # paste your OpenRouter key (optional — runs without it)
 
 # 1. mint the first ADMIN token (bypasses HTTP auth to bootstrap the operator)
@@ -169,6 +164,12 @@ Read from environment variables (`.env` is auto-loaded locally via `godotenv`; o
 | `GIT_SSH_KEY`               | —                              | private deploy key for pushing to the remote                   |
 | `GIT_AUTHOR_NAME` / `_EMAIL`| `secondbrain` / `…@localhost`  | commit identity                                                |
 
+## Troubleshooting
+
+- **YouTube works a few times, then stops** (`"Sign in to confirm you're not a bot"`): YouTube flags cloud/datacenter IPs after repeated requests. Fix with [`YTDLP_COOKIES`](#configuration) (free, but re-export the cookies periodically) or [`YTDLP_PROXY`](#configuration) (must be a **residential** proxy — datacenter proxies get flagged too).
+- **"This video has no captions available"**: opt into audio transcription with `YOUTUBE_AUDIO_FALLBACK=true` plus [`GROQ_API_KEY`](#configuration) (and ideally cookies or a proxy — pulling the actual media trips the bot wall harder than fetching captions does).
+- **A job shows `misfiled`**: the error is shown inline on the job row. Fix the underlying cause, then hit **retry** on that row, or re-`POST /v1/ingest` the same payload with `"force": true`.
+
 ## MCP server — share the vault with any agent
 
 Any MCP-capable agent (Claude Code, Cursor, Claude Desktop/web, …) can read and write the same vault with consistent OKF structure, indexes, and git. The tool surface is identical across both transports below:
@@ -234,7 +235,7 @@ The backend already gives you a browser UI and a git-synced vault. The **GoBrain
 - **Watch it file, then search your whole vault** from your pocket — the same semantic search that's on the web.
 - **Connect in one scan.** Open the web UI → **Link phone** → scan the QR from the app. No token typing.
 
-**A one-time purchase — not a subscription.** You self-host the backend and your vault lives in *your own git repo*, so keeping it in sync across devices costs you nothing. The app is a single upfront payment: buy it once, own it, no monthly fees ever. For comparison, Obsidian charges roughly **$4/month** for its Sync add-on just to keep a vault in sync across devices — GoBrain gives you that for free (it's just git) and asks once for the app.
+**A one-time purchase — not a subscription.** You self-host the backend and your vault lives in *your own git repo*, so keeping it in sync across devices costs you nothing. The app is a single upfront payment: buy it once, own it, no monthly fees ever. For comparison, Obsidian's Sync is a paid add-on just to keep a vault in sync across devices — GoBrain sync is just git, so it's free, and the app asks once, up front.
 
 > The app talks only to **your** backend — GoBrain is not a hosted service and never sees your data or your keys. Bring your own backend, bring your own keys, own your knowledge.
 
@@ -262,3 +263,7 @@ internal/vault/        single-writer goroutine, git commit/rebase/push, read/sea
 go build ./...
 go vet ./... && go test ./...
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

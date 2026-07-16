@@ -147,11 +147,12 @@ body.connected #connect { display: none; }
 
 /* ---- inputs ---- */
 input, select {
-  font-family: system-ui, sans-serif; font-size: 0.95rem; color: var(--ink);
+  font-family: system-ui, sans-serif; font-size: 1rem; color: var(--ink);
   background: var(--elevated); border: 1px solid var(--border);
   border-radius: 10px; padding: 11px 13px; width: 100%;
 }
-input::placeholder { color: var(--ink-faint); }
+/* --ink-soft clears 4.5:1 on --elevated; --ink-faint did not. Keeps placeholders legible. */
+input::placeholder { color: var(--ink-soft); }
 input:focus, select:focus {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-tint);
@@ -180,12 +181,12 @@ button { font-family: system-ui, sans-serif; cursor: pointer; }
   display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--border); border-radius: 999px;
   padding: 7px 13px; background: var(--elevated); cursor: pointer;
-  font-family: ui-monospace, monospace; font-size: 0.78rem; color: var(--ink-soft);
+  font-family: ui-monospace, monospace; font-size: 0.82rem; color: var(--ink);
 }
 .chip:hover { border-color: var(--accent-border); }
 .chip.active { background: var(--accent-tint); border-color: var(--accent); color: var(--accent-text); font-weight: 700; }
 .chip svg { width: 15px; height: 15px; }
-.capture-payload { flex: 1; }
+.capture-payload { flex: 1; font-size: 1.05rem; }
 .capture-row { display: flex; gap: 10px; }
 .capture-row .primary { flex: 0 0 auto; }
 

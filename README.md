@@ -37,7 +37,7 @@ flowchart LR
     V --> G[(git remote<br/>optional)]
     V --> E[embed → vectors<br/>SQLite]
     C -->|/v1/search · /v1/related| E
-    C -->|MCP over HTTP<br/>OAuth 2.1| M[/mcp Streamable HTTP]
+    C -->|MCP over HTTP<br/>OAuth 2.1| M["/mcp Streamable HTTP"]
     C -->|MCP over stdio| S[cmd/mcp bridge]
     M & S --> V
 ```

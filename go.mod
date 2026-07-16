@@ -7,6 +7,7 @@ require (
 	github.com/gen2brain/heic v0.7.1
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/joho/godotenv v1.5.1
+	github.com/yuin/goldmark v1.8.4
 	modernc.org/sqlite v1.34.1
 )
 

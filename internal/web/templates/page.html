@@ -53,7 +53,7 @@
       </form>
     </section>
 
-    <section id="app">
+    <section id="app" tabindex="-1">
       <section class="capture">
         <form class="composer capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
               hx-encoding="multipart/form-data"
@@ -220,7 +220,21 @@
     };
     window.gbDisconnect = disconnect;
     window.gbRefresh = refreshJobs;
-    window.gbCloseNote = function () { document.getElementById('note-panel').innerHTML = ''; };
+    window.gbCloseNote = function () {
+      var panel = document.getElementById('note-panel');
+      var hadFocus = panel.contains(document.activeElement);
+      panel.innerHTML = '';
+      // The panel can be opened from many different "open" buttons scattered
+      // across the library and search results, so there's no single sensible
+      // element to return focus to — land on the main content region instead
+      // of leaving focus stuck on a now-removed node.
+      if (hadFocus) document.getElementById('app').focus();
+    };
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('note-panel').innerHTML.trim() !== '') {
+        window.gbCloseNote();
+      }
+    });
 
     // ---- composer: auto-grow + Enter submits (Shift+Enter for a newline) ----
     var payload = document.querySelector('.composer-input');

@@ -10,6 +10,7 @@
 package web
 
 import (
+	"bytes"
 	"embed"
 	"encoding/base64"
 	"html/template"
@@ -18,6 +19,9 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/yuin/goldmark"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 
 	"secondbrain-server/internal/index"
 	"secondbrain-server/internal/store"
@@ -251,7 +255,10 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	render(w, "search", data)
 }
 
-// Note renders a single note's raw markdown in a read panel.
+// Note renders a single note in a read panel: the YAML frontmatter as a small
+// collapsed mono block (provenance, not prose) and the body as sanitized HTML
+// via goldmark, so scraped article/YouTube/image notes read like content
+// instead of a raw-markdown dump.
 func (h *Handler) Note(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
 	if path == "" {
@@ -263,7 +270,8 @@ func (h *Handler) Note(w http.ResponseWriter, r *http.Request) {
 		render(w, "note", noteData{Path: path, NotFound: true})
 		return
 	}
-	render(w, "note", noteData{Path: path, Content: content})
+	frontmatter, body := splitFrontmatter(content)
+	render(w, "note", noteData{Path: path, Frontmatter: frontmatter, Body: renderMarkdown(body)})
 }
 
 type searchData struct {
@@ -272,9 +280,42 @@ type searchData struct {
 }
 
 type noteData struct {
-	Path     string
-	Content  string
-	NotFound bool
+	Path        string
+	Frontmatter string
+	Body        template.HTML
+	NotFound    bool
+}
+
+// splitFrontmatter separates a note's leading "---\n...\n---" YAML block (see
+// ingest/render.go, which always emits exactly this shape) from its body. Text
+// with no frontmatter block renders as-is.
+func splitFrontmatter(text string) (frontmatter, body string) {
+	if !strings.HasPrefix(text, "---\n") {
+		return "", text
+	}
+	rest := text[4:]
+	end := strings.Index(rest, "\n---")
+	if end < 0 {
+		return "", text
+	}
+	return strings.TrimSpace(rest[:end]), strings.TrimSpace(rest[end+4:])
+}
+
+// mdRenderer converts a note body to HTML. Raw HTML is deliberately left
+// unsafe-disabled (the default: no html.WithUnsafe()) so any HTML that made it
+// into scraped article/YouTube content is escaped rather than executed —
+// notes are untrusted content, not templates.
+var mdRenderer = goldmark.New(
+	goldmark.WithRendererOptions(goldmarkhtml.WithHardWraps()),
+)
+
+func renderMarkdown(src string) template.HTML {
+	var buf bytes.Buffer
+	if err := mdRenderer.Convert([]byte(src), &buf); err != nil {
+		log.Printf("web: render markdown: %v", err)
+		return template.HTML("<pre>" + template.HTMLEscapeString(src) + "</pre>")
+	}
+	return template.HTML(buf.String())
 }
 
 // detectKind maps a raw capture payload to a source_kind, matching the app.

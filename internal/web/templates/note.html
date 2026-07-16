@@ -6,6 +6,12 @@
 {{- if .NotFound}}
 <p class="empty">Note not found.</p>
 {{- else}}
-<pre class="note-body">{{.Content}}</pre>
+{{- if .Frontmatter}}
+<details class="note-meta">
+  <summary class="mono">frontmatter</summary>
+  <pre class="note-meta-body mono">{{.Frontmatter}}</pre>
+</details>
+{{- end}}
+<div class="note-rendered">{{.Body}}</div>
 {{- end}}
 {{end}}

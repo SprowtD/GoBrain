@@ -22,6 +22,40 @@
 - **Shared with agents over MCP** — a **remote** [MCP](https://modelcontextprotocol.io) endpoint (Streamable HTTP + OAuth 2.1) lets Claude Code, Cursor, Claude Desktop/web, and friends connect with just a URL and read/write the same vault; a stdio server is there too. A team on different harnesses contributes to one brain (see [MCP server](#mcp-server--share-the-vault-with-any-agent)).
 - **Durable by design** — a single-writer goroutine owns all disk + git mutations (atomic writes, debounced commits, `rebase`-before-push, crash-recovery commit on boot).
 
+<details>
+<summary>What a filed note looks like</summary>
+
+```markdown
+---
+type: "Article"
+title: "Error Handling in Go"
+description: "This section discusses the built-in error type in Go, how it is used, and best practices for error handling."
+resource: "https://go.dev/blog/error-handling-and-go"
+tags: ["go", "error handling", "programming"]
+timestamp: 2026-07-16T18:13:10Z
+source_kind: "article"
+job_id: "a6a6394a3e34208650e23676ba0e8cfb"
+byline: "Andrew Gerrand 12 July 2011"
+model: "openai/gpt-4o-mini"
+---
+
+If you have written any Go code you have probably encountered the built-in error type. Go code uses error values to indicate an abnormal state. For example, the os.Open function returns a non-nil error value when it fails to open a file.
+
+f, err := os.Open("filename.ext")
+if err != nil {
+    log.Fatal(err)
+}
+
+<!-- gobrain:related:start -->
+## Related
+- [[02-understanding-the-error-type|Understanding the Error Type]]
+- [[01-introduction-to-go-slices|Introduction to Go Slices]]
+<!-- gobrain:related:end -->
+```
+
+Real output from a `POST /v1/ingest` with `source_kind: article` — OKF frontmatter, the chunked body, and an auto-generated `[[related]]` block linking nearest neighbours in the vault.
+</details>
+
 ## Architecture
 
 ```mermaid
@@ -90,9 +124,11 @@ curl -s 'localhost:8080/v1/search?q=video%20transcripts' -H "Authorization: Bear
 
 Open your backend's URL in a browser (`http://localhost:8080` locally, or your Railway domain) and you get a built-in, single-page UI — no install, no separate deployment, served straight from the same binary:
 
-- **Capture** a link, thought, or image URL (source kind is auto-detected).
-- **Library** with a live summary (filed / filing / misfiled) and status that updates as jobs are filed.
-- **Search** your vault (semantic when an OpenRouter key is set, keyword otherwise) and open any note.
+![GoBrain web UI — capture composer and library](assets/web-ui.png)
+
+- **Capture** a link, thought, or image (paste a URL, attach/photograph a file, or type — source kind is auto-detected).
+- **Library** with a live summary (filed / filing / misfiled) and status that updates as jobs are filed; a misfiled row shows its error inline with a one-click retry.
+- **Search** your vault (semantic when an OpenRouter key is set, keyword otherwise) and open any note in a readable panel.
 - **Dark-mode first**, follows your OS theme with a manual Dark/Light toggle.
 
 **Connecting** — there is no account or login. Paste an access token once; it's stored in that browser and sent as a bearer token on every request. Mint one with `server mint "my browser"` (or from an admin via `POST /v1/tokens`).

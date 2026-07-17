@@ -11,6 +11,10 @@ type ingestRequest struct {
 	SourceKind string `json:"source_kind"`
 	Payload    string `json:"payload"`
 	Note       string `json:"note,omitempty"`
+	// Title is an optional display label for the job row — clients sending an
+	// image as a base64 data: URL should set it (e.g. the photo's filename) so
+	// job listings never have to fall back to the raw payload.
+	Title string `json:"title,omitempty"`
 	// Force re-ingests identical content instead of collapsing it onto the
 	// existing job (e.g. deliberately re-capturing an article that changed).
 	Force bool `json:"force,omitempty"`
@@ -77,11 +81,21 @@ func IngestHandler(jobQueue chan<- store.Job) http.HandlerFunc {
 // createJob applies de-duplication unless the request opts out with force. It
 // centralizes the choice so /ingest and /ingest/batch behave identically.
 func createJob(req ingestRequest, tokenLabel string) (store.Job, bool, error) {
+	title := truncate(req.Title, 200)
 	if req.Force {
-		job, err := store.CreateJob(req.SourceKind, req.Payload, req.Note, tokenLabel)
+		job, err := store.CreateJob(req.SourceKind, req.Payload, req.Note, tokenLabel, title)
 		return job, false, err
 	}
-	return store.CreateJobDeduped(req.SourceKind, req.Payload, req.Note, tokenLabel)
+	return store.CreateJobDeduped(req.SourceKind, req.Payload, req.Note, tokenLabel, title)
+}
+
+// truncate caps a client-supplied string at max runes (titles are display-only).
+func truncate(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 // maxBatchItems caps a single batch so one request can't flood the queue. The

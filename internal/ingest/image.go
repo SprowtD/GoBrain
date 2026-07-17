@@ -77,6 +77,45 @@ func prepareVisionImage(ctx context.Context, img imagePayload) (ref string, jpg 
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(converted), converted, nil
 }
 
+// SniffImageContentType decides an uploaded file's image content type from its
+// BYTES, not the client's declared header — browsers send application/octet-stream
+// for formats they don't recognize (HEIC on most desktops), and declared types
+// lie in both directions. It owns the same format policy the async pipeline
+// enforces (SVG is rejected — vision models take raster only) so a bad upload
+// fails at the front door with a clear message instead of misfiling later.
+func SniffImageContentType(data []byte, declared string) (string, error) {
+	if isHEIF(data) {
+		return "image/heic", nil
+	}
+	ct := http.DetectContentType(data) // never empty; falls back to octet-stream
+	if !strings.HasPrefix(ct, "image/") {
+		// Sniffing came back generic — fall back to the client's claim so less
+		// common (but still raster) types aren't rejected outright.
+		ct = strings.ToLower(strings.TrimSpace(declared))
+		if i := strings.IndexByte(ct, ';'); i >= 0 {
+			ct = strings.TrimSpace(ct[:i])
+		}
+	}
+	if strings.HasPrefix(ct, "image/svg") || strings.HasPrefix(ct, "text/xml") {
+		return "", errSVGUnsupported
+	}
+	if !strings.HasPrefix(ct, "image/") {
+		return "", fmt.Errorf("only image files are supported")
+	}
+	return ct, nil
+}
+
+// EncodeImageDataURL builds the base64 data: URL the ingest pipeline consumes
+// (decodeDataURL is its counterpart). One output allocation — image payloads
+// run to megabytes, so naive string concatenation doubles the peak.
+func EncodeImageDataURL(ctype string, data []byte) string {
+	prefix := "data:" + ctype + ";base64,"
+	b := make([]byte, len(prefix)+base64.StdEncoding.EncodedLen(len(data)))
+	copy(b, prefix)
+	base64.StdEncoding.Encode(b[len(prefix):], data)
+	return string(b)
+}
+
 // isHEIF reports whether b is a HEIF/HEIC image, by sniffing the ISO-BMFF
 // 'ftyp' box brand. Sniffing the bytes is more reliable than trusting a data:
 // URL's declared MIME, which mobile clients often set to a generic value.

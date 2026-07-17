@@ -12,18 +12,24 @@ package web
 import (
 	"bytes"
 	"embed"
-	"encoding/base64"
+	"errors"
 	"html/template"
 	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/renderer"
 	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 
 	"secondbrain-server/internal/index"
+	"secondbrain-server/internal/ingest"
 	"secondbrain-server/internal/store"
 	"secondbrain-server/internal/vault"
 )
@@ -34,7 +40,23 @@ var templatesFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-var tmpl = template.Must(template.ParseFS(templatesFS, "templates/*.html"))
+var tmpl = template.Must(template.New("").
+	Funcs(template.FuncMap{"displayPayload": displayPayload}).
+	ParseFS(templatesFS, "templates/*.html"))
+
+// displayPayload is the jobs-list fallback label when a job has no title. A
+// base64 data: URL (an uploaded/shared image on any ingest path) must never
+// render as a row's name, and even text payloads get capped to a list-sized
+// prefix.
+func displayPayload(p string) string {
+	if strings.HasPrefix(p, "data:") {
+		return "image capture"
+	}
+	if r := []rune(p); len(r) > 140 {
+		return string(r[:140]) + "…"
+	}
+	return p
+}
 
 // Handler holds the dependencies the web UI needs. The job queue is the same
 // buffered channel the JSON /v1/ingest handler feeds.
@@ -62,9 +84,10 @@ func (h *Handler) Page(w http.ResponseWriter, _ *http.Request) {
 	render(w, "page.html", nil)
 }
 
-// maxImageUploadBytes caps a web-UI image upload. Enforced twice: as a body
-// ceiling on the whole request (parseUpload) and again on the bytes actually
-// read from the file field, so a mismatched Content-Length can't slip past it.
+// maxImageUploadBytes caps a web-UI image upload. MaxBytesReader byte-counts
+// the whole request (it doesn't trust Content-Length), with a small margin for
+// the other form fields; the per-file re-check below it exists only to
+// attribute the failure to the file with a precise message.
 const maxImageUploadBytes = 10 << 20 // 10 MB
 
 // Ingest queues a capture job and returns the refreshed job list fragment so the
@@ -99,25 +122,25 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 		kind = detectKind(payload)
 	}
 
-	job, duplicate, err := store.CreateJobDeduped(kind, payload, note, "web")
+	// The title (an upload's filename) rides the INSERT itself so no poll can
+	// ever observe an untitled image job; a duplicate capture keeps whatever
+	// title the original already has.
+	job, duplicate, err := store.CreateJobDeduped(kind, payload, note, "web", title)
 	if err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
-	// An uploaded image's payload is a giant base64 data: URL — never worth
-	// showing in the jobs list. Give it the filename as a display title
-	// instead (only for the fresh job; a duplicate keeps whatever title the
-	// original capture already has).
-	if title != "" && !duplicate {
-		_ = store.SetJobTitle(job.ID, title)
-	}
-	// Non-blocking enqueue: mirror the JSON handler's load-shedding. The row
-	// stays 'queued' if the buffer is full. A duplicate capture is collapsed onto
-	// the existing job, so there's nothing new to queue.
+	// Non-blocking enqueue: mirror the JSON handler's load-shedding, including
+	// its 503 — a silently shed job would sit 'queued' forever (nothing rescans
+	// the table). A duplicate capture is collapsed onto the existing job, so
+	// there's nothing new to queue.
 	if !duplicate {
 		select {
 		case h.queue <- job:
 		default:
+			_ = store.UpdateJobStatus(job.ID, "misfiled", "server busy — hit capture to retry")
+			http.Error(w, "server busy, retry shortly", http.StatusServiceUnavailable)
+			return
 		}
 	}
 
@@ -126,17 +149,19 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 
 // parseUpload handles a multipart capture: the same payload/note/source_kind
 // fields as a plain form post, plus an optional "file" field for an uploaded
-// image. A file always wins the source kind (image) and becomes the payload
-// as a base64 data: URL — the same format the mobile app already sends for
-// shared photos, so it flows through the existing image pipeline (HEIC
-// handling, vision call, vault asset storage) with no parallel code path. ok
-// is false once parseUpload has already written an error response.
+// image. A file wins the source kind (image) and becomes the payload as a
+// base64 data: URL — the same format the mobile app already sends for shared
+// photos, so it flows through the existing image pipeline (HEIC handling,
+// vision call, vault asset storage) with no parallel code path. Text typed
+// alongside an attachment is folded into the note, never dropped. ok is false
+// once parseUpload has already written an error response.
 func (h *Handler) parseUpload(w http.ResponseWriter, r *http.Request) (payload, note, kind, title string, ok bool) {
-	// A generous margin over the image cap covers the other form fields
-	// (payload/note/kind, and multipart boundary overhead) without allowing a
-	// second image-sized field to smuggle past the check below.
+	// MaxBytesReader byte-counts the body; the margin over the image cap covers
+	// the other form fields and multipart boundary overhead. The small
+	// ParseMultipartForm memory budget spills the file part to a temp file
+	// instead of holding all 10MB in the form buffer.
 	r.Body = http.MaxBytesReader(w, r.Body, maxImageUploadBytes+1<<20)
-	if err := r.ParseMultipartForm(maxImageUploadBytes); err != nil {
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		http.Error(w, "upload too large (max 10MB) or invalid form", http.StatusRequestEntityTooLarge)
 		return "", "", "", "", false
 	}
@@ -154,12 +179,6 @@ func (h *Handler) parseUpload(w http.ResponseWriter, r *http.Request) (payload, 
 	}
 	defer file.Close()
 
-	ctype := header.Header.Get("Content-Type")
-	if !strings.HasPrefix(strings.ToLower(ctype), "image/") {
-		http.Error(w, "only image files are supported", http.StatusBadRequest)
-		return "", "", "", "", false
-	}
-
 	data, err := io.ReadAll(io.LimitReader(file, maxImageUploadBytes+1))
 	if err != nil {
 		http.Error(w, "failed to read upload", http.StatusBadRequest)
@@ -170,8 +189,27 @@ func (h *Handler) parseUpload(w http.ResponseWriter, r *http.Request) (payload, 
 		return "", "", "", "", false
 	}
 
-	payload = "data:" + ctype + ";base64," + base64.StdEncoding.EncodeToString(data)
-	return payload, note, "image", header.Filename, true
+	// Sniff the type from the bytes (the declared header lies both ways: HEIC
+	// arrives as application/octet-stream, and an "image/svg+xml" would only
+	// fail later, asynchronously, in the vision pipeline).
+	ctype, err := ingest.SniffImageContentType(data, header.Header.Get("Content-Type"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return "", "", "", "", false
+	}
+
+	// The composer allows typing a thought AND attaching an image; the image
+	// becomes the payload, so fold the typed text into the note — losing what
+	// the user typed is the one unforgivable failure for a capture tool.
+	if payload != "" {
+		if note == "" {
+			note = payload
+		} else {
+			note = payload + " — " + note
+		}
+	}
+
+	return ingest.EncodeImageDataURL(ctype, data), note, "image", header.Filename, true
 }
 
 // Jobs renders the recent-jobs fragment (polled by the page).
@@ -179,11 +217,11 @@ func (h *Handler) Jobs(w http.ResponseWriter, _ *http.Request) {
 	h.renderJobs(w)
 }
 
-// Retry re-queues a misfiled job's original capture with force semantics (the
-// same content-hash dedup that normally collapses a re-submit onto the
-// existing job is deliberately bypassed — that's the whole point of a retry).
-// It mirrors the "force":true path of /v1/ingest, just scoped to one job's
-// already-known kind/payload/note instead of taking a fresh request body.
+// Retry flips a misfiled job back to 'queued' and re-enqueues it — the SAME
+// row, not a clone, so its title and content-hash survive, the misfiled row's
+// retry button disappears on the next poll, and a double-click (or a crafted
+// id for a job that isn't misfiled) is a 409 no-op instead of a duplicate
+// note plus a duplicate paid model call.
 func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
@@ -194,20 +232,23 @@ func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
-	orig, err := store.GetJob(id)
-	if err != nil {
-		http.Error(w, "job not found", http.StatusNotFound)
+	job, err := store.RequeueJob(id)
+	if errors.Is(err, store.ErrNotRetryable) {
+		http.Error(w, "already retried or filed", http.StatusConflict)
 		return
 	}
-
-	job, err := store.CreateJob(orig.SourceKind, orig.Payload, orig.Note, orig.TokenLabel)
 	if err != nil {
-		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		http.Error(w, "failed to requeue job", http.StatusInternalServerError)
 		return
 	}
 	select {
 	case h.queue <- job:
 	default:
+		// Queue full: put the row back the way we found it (nothing rescans
+		// 'queued' rows, so leaving it queued would strand it) and say so.
+		_ = store.UpdateJobStatus(job.ID, "misfiled", "server busy — retry shortly")
+		http.Error(w, "server busy, retry shortly", http.StatusServiceUnavailable)
+		return
 	}
 
 	h.renderJobs(w)
@@ -260,18 +301,22 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 // via goldmark, so scraped article/YouTube/image notes read like content
 // instead of a raw-markdown dump.
 func (h *Handler) Note(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	if path == "" {
+	notePath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if notePath == "" {
 		http.Error(w, "path is required", http.StatusBadRequest)
 		return
 	}
-	content, err := vault.ReadNote(path)
+	content, err := vault.ReadNote(notePath)
 	if err != nil {
-		render(w, "note", noteData{Path: path, NotFound: true})
+		render(w, "note", noteData{Path: notePath, NotFound: true})
 		return
 	}
-	frontmatter, body := splitFrontmatter(content)
-	render(w, "note", noteData{Path: path, Frontmatter: frontmatter, Body: renderMarkdown(body)})
+	frontmatter, body, _ := vault.SplitFrontmatter(content)
+	render(w, "note", noteData{
+		Path:        notePath,
+		Frontmatter: strings.TrimSpace(frontmatter),
+		Body:        renderMarkdown(notePath, strings.TrimSpace(body)),
+	})
 }
 
 type searchData struct {
@@ -286,36 +331,95 @@ type noteData struct {
 	NotFound    bool
 }
 
-// splitFrontmatter separates a note's leading "---\n...\n---" YAML block (see
-// ingest/render.go, which always emits exactly this shape) from its body. Text
-// with no frontmatter block renders as-is.
-func splitFrontmatter(text string) (frontmatter, body string) {
-	if !strings.HasPrefix(text, "---\n") {
-		return "", text
-	}
-	rest := text[4:]
-	end := strings.Index(rest, "\n---")
-	if end < 0 {
-		return "", text
-	}
-	return strings.TrimSpace(rest[:end]), strings.TrimSpace(rest[end+4:])
-}
-
-// mdRenderer converts a note body to HTML. Raw HTML is deliberately left
-// unsafe-disabled (the default: no html.WithUnsafe()) so any HTML that made it
-// into scraped article/YouTube content is escaped rather than executed —
-// notes are untrusted content, not templates.
+// mdRenderer converts a note body to HTML. Notes are untrusted content, not
+// templates: raw HTML in scraped article/YouTube text is rendered as VISIBLE
+// escaped text by escapeRawHTML below — goldmark's default would swallow it
+// with an "<!-- raw HTML omitted -->" comment, silently hiding content, and
+// html.WithUnsafe would execute it.
 var mdRenderer = goldmark.New(
-	goldmark.WithRendererOptions(goldmarkhtml.WithHardWraps()),
+	goldmark.WithRendererOptions(
+		goldmarkhtml.WithHardWraps(),
+		renderer.WithNodeRenderers(util.Prioritized(escapeRawHTML{}, 500)),
+	),
 )
 
-func renderMarkdown(src string) template.HTML {
+// escapeRawHTML renders raw-HTML nodes as escaped text so angle-bracket
+// content stays visible (matching what the old <pre> view guaranteed).
+type escapeRawHTML struct{}
+
+func (escapeRawHTML) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
+	reg.Register(ast.KindRawHTML, renderEscapedRawHTML)
+	reg.Register(ast.KindHTMLBlock, renderEscapedHTMLBlock)
+}
+
+func renderEscapedRawHTML(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	if !entering {
+		return ast.WalkSkipChildren, nil
+	}
+	n := node.(*ast.RawHTML)
+	for i := 0; i < n.Segments.Len(); i++ {
+		seg := n.Segments.At(i)
+		goldmarkhtml.DefaultWriter.RawWrite(w, seg.Value(source)) // RawWrite escapes
+	}
+	return ast.WalkSkipChildren, nil
+}
+
+func renderEscapedHTMLBlock(w util.BufWriter, source []byte, node ast.Node, entering bool) (ast.WalkStatus, error) {
+	n := node.(*ast.HTMLBlock)
+	if entering {
+		for i := 0; i < n.Lines().Len(); i++ {
+			line := n.Lines().At(i)
+			goldmarkhtml.DefaultWriter.RawWrite(w, line.Value(source))
+		}
+	} else if n.HasClosure() {
+		goldmarkhtml.DefaultWriter.RawWrite(w, n.ClosureLine.Value(source))
+	}
+	return ast.WalkContinue, nil
+}
+
+// maxInlineImageBytes caps how much of a stored asset gets inlined into the
+// note panel as a data: URI. Vision-pipeline assets are typically well under
+// this; anything bigger degrades to a broken embed rather than a huge fragment.
+const maxInlineImageBytes = 8 << 20
+
+func renderMarkdown(notePath, src string) template.HTML {
+	source := []byte(src)
+	doc := mdRenderer.Parser().Parse(text.NewReader(source))
+	inlineVaultImages(doc, source, path.Dir(notePath))
 	var buf bytes.Buffer
-	if err := mdRenderer.Convert([]byte(src), &buf); err != nil {
+	if err := mdRenderer.Renderer().Render(&buf, source, doc); err != nil {
 		log.Printf("web: render markdown: %v", err)
 		return template.HTML("<pre>" + template.HTMLEscapeString(src) + "</pre>")
 	}
 	return template.HTML(buf.String())
+}
+
+// inlineVaultImages rewrites relative image embeds (ingest stores an image
+// note's source picture next to the note and embeds it by bare filename, an
+// Obsidian convention) into data: URIs. No HTTP route serves vault assets —
+// and <img> requests wouldn't carry the bearer token anyway — so inlining is
+// what makes the picture actually show in the note panel.
+func inlineVaultImages(doc ast.Node, source []byte, noteDir string) {
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		img, ok := n.(*ast.Image)
+		if !ok || !entering {
+			return ast.WalkContinue, nil
+		}
+		dest := string(img.Destination)
+		if strings.Contains(dest, "://") || strings.HasPrefix(dest, "data:") || strings.HasPrefix(dest, "/") {
+			return ast.WalkContinue, nil // absolute/remote/inline already
+		}
+		data, err := vault.ReadFile(path.Join(noteDir, dest))
+		if err != nil || len(data) == 0 || len(data) > maxInlineImageBytes {
+			return ast.WalkContinue, nil // leave the embed as-is
+		}
+		ctype, err := ingest.SniffImageContentType(data, "")
+		if err != nil {
+			return ast.WalkContinue, nil
+		}
+		img.Destination = []byte(ingest.EncodeImageDataURL(ctype, data))
+		return ast.WalkContinue, nil
+	})
 }
 
 // detectKind maps a raw capture payload to a source_kind, matching the app.

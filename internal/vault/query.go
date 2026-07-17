@@ -30,18 +30,25 @@ func safeJoin(rel string) (string, error) {
 
 // ReadNote returns the contents of a note by vault-relative path.
 func ReadNote(rel string) (string, error) {
+	data, err := ReadFile(rel)
+	return string(data), err
+}
+
+// ReadFile returns the raw bytes of any vault file by vault-relative path —
+// used for the binary assets (stored source images) that sit next to notes.
+func ReadFile(rel string) ([]byte, error) {
 	full, err := safeJoin(rel)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	data, err := os.ReadFile(full)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", ErrNotFound
+			return nil, ErrNotFound
 		}
-		return "", err
+		return nil, err
 	}
-	return string(data), nil
+	return data, nil
 }
 
 // SearchHit is one matching note.
@@ -114,16 +121,42 @@ func NoteTitle(rel string) (string, error) {
 	return title, nil
 }
 
+// SplitFrontmatter separates a note's leading YAML frontmatter block from its
+// body. Delimiters must be whole "---" lines (CRLF tolerated) — a "---" that
+// merely starts a line's text, a "----" rule, or a mid-line occurrence never
+// closes the block, unlike a naive substring scan. When the note has no
+// well-formed block, found is false and body is the input unchanged. This is
+// the one shared parser for the shape ingest/render.go emits; keep consumers
+// (web note panel, Excerpt) on it rather than hand-rolling scans.
+func SplitFrontmatter(text string) (frontmatter, body string, found bool) {
+	var rest string
+	switch {
+	case strings.HasPrefix(text, "---\n"):
+		rest = text[4:]
+	case strings.HasPrefix(text, "---\r\n"):
+		rest = text[5:]
+	default:
+		return "", text, false
+	}
+	for off := 0; off < len(rest); {
+		lineEnd := len(rest)
+		next := len(rest)
+		if nl := strings.IndexByte(rest[off:], '\n'); nl >= 0 {
+			lineEnd = off + nl
+			next = off + nl + 1
+		}
+		if strings.TrimRight(rest[off:lineEnd], "\r") == "---" {
+			return rest[:off], rest[next:], true
+		}
+		off = next
+	}
+	return "", text, false
+}
+
 // Excerpt returns a compact leading snippet of a note's body (frontmatter
 // stripped), used for semantic-search hits where there's no keyword to anchor on.
 func Excerpt(text string, max int) string {
-	body := text
-	// Skip a leading YAML frontmatter block if present.
-	if strings.HasPrefix(body, "---\n") {
-		if end := strings.Index(body[4:], "\n---"); end >= 0 {
-			body = body[4+end+4:]
-		}
-	}
+	_, body, _ := SplitFrontmatter(text)
 	body = strings.TrimSpace(strings.ReplaceAll(body, "\n", " "))
 	if max > 0 {
 		r := []rune(body)

@@ -21,7 +21,7 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <span class="brand-name">Go<span class="brand-accent">Brain</span></span>
     </div>
-    <div class="top-search">
+    <div class="top-search" data-error-target="#search-error" data-error-msg="Couldn&#39;t search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="top-search-in" type="search" name="q" placeholder="Search your vault…" autocomplete="off"
              hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
@@ -57,7 +57,8 @@
       <section class="capture">
         <form class="composer capture-form" hx-post="/ui/ingest" hx-target="#jobs" hx-swap="innerHTML"
               hx-encoding="multipart/form-data"
-              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';window.gbClearCaptureError();window.gbClearAttachment();}">
+              data-error-target="#capture-error" data-error-msg="Couldn&#39;t capture"
+              hx-on::after-request="if(event.detail.successful){this.reset();var t=this.querySelector('.composer-input');t.style.height='auto';window.gbClearAttachment();}">
           <textarea class="composer-input" name="payload" rows="1" required
                     placeholder="Paste a link, or type a thought…" autocomplete="off"></textarea>
           <input class="composer-note" name="note" placeholder="Optional note — context for later" autocomplete="off">
@@ -85,17 +86,18 @@
         </form>
       </section>
 
-      <section class="library">
+      <section class="library" data-error-target="#library-error" data-error-msg="Couldn&#39;t update the library">
         <div class="sect">
           <h2>Library</h2>
           <button class="ghost" onclick="gbRefresh()">refresh</button>
         </div>
+        <p id="library-error" class="form-error" hidden></p>
         <div id="jobs">
           <p class="empty">Loading…</p>
         </div>
       </section>
 
-      <section class="search">
+      <section class="search" data-error-target="#search-error" data-error-msg="Couldn&#39;t search">
         <div class="sect">
           <h2>Search</h2>
         </div>
@@ -104,6 +106,7 @@
                  hx-get="/ui/search" hx-target="#search-results" hx-swap="innerHTML"
                  hx-trigger="input changed delay:400ms, search">
         </div>
+        <p id="search-error" class="form-error" hidden></p>
         <div id="search-results"></div>
       </section>
     </section>
@@ -156,12 +159,28 @@
       if (t) e.detail.headers['Authorization'] = 'Bearer ' + t;
     });
 
-    // ---- capture/search failure feedback ----
-    function requestOrigin(elt) {
-      if (!elt || !elt.closest) return null;
-      if (elt.closest('.capture-form')) return 'capture';
-      if (elt.id === 'top-search-in' || elt.closest('.search-mobile')) return 'search';
-      return null;
+    // ---- request failure feedback ----
+    // Generic over every htmx control: the failing element's nearest
+    // [data-error-target] ancestor names the message region and the message
+    // base, so a new control gets error surfacing by living inside one —
+    // nothing to wire per button.
+    function errorHost(elt) {
+      return elt && elt.closest ? elt.closest('[data-error-target]') : null;
+    }
+    function showRequestError(elt, detail) {
+      var host = errorHost(elt);
+      if (!host) return;
+      var el = document.querySelector(host.getAttribute('data-error-target'));
+      if (!el) return;
+      var base = host.getAttribute('data-error-msg') || "Request failed";
+      el.textContent = base + ' — ' + detail;
+      el.hidden = false;
+    }
+    function clearRequestError(elt) {
+      var host = errorHost(elt);
+      if (!host) return;
+      var el = document.querySelector(host.getAttribute('data-error-target'));
+      if (el) { el.hidden = true; el.textContent = ''; }
     }
     // Pull a short, human error message out of a response body when there is
     // one (handlers write plain text like "payload is required"); otherwise
@@ -170,38 +189,16 @@
       var t = xhr && xhr.responseText ? xhr.responseText.trim() : '';
       return (t && t.length <= 80 && t.indexOf('<') === -1) ? t : '';
     }
-    window.gbShowCaptureError = function (msg) {
-      var el = document.getElementById('capture-error');
-      el.textContent = msg;
-      el.hidden = false;
-    };
-    window.gbClearCaptureError = function () {
-      var el = document.getElementById('capture-error');
-      el.hidden = true;
-      el.textContent = '';
-    };
-    function showSearchError(msg) {
-      var el = document.getElementById('search-results');
-      if (el) el.innerHTML = '<p class="empty err"></p>';
-      if (el) el.firstChild.textContent = msg;
-    }
     document.body.addEventListener('htmx:responseError', function (e) {
       if (e.detail.xhr.status === 401) { disconnect(); return; }
-      var origin = requestOrigin(e.detail.elt);
       var extra = humanText(e.detail.xhr);
-      if (origin === 'capture') {
-        window.gbShowCaptureError(extra ? "Couldn't capture — " + extra + '.' : "Couldn't capture — try again.");
-      } else if (origin === 'search') {
-        showSearchError(extra ? "Couldn't search — " + extra + '.' : "Couldn't search — try again.");
-      }
+      showRequestError(e.detail.elt, extra ? extra + '.' : 'try again.');
     });
     document.body.addEventListener('htmx:sendError', function (e) {
-      var origin = requestOrigin(e.detail.elt);
-      if (origin === 'capture') {
-        window.gbShowCaptureError("Couldn't capture — check your connection and try again.");
-      } else if (origin === 'search') {
-        showSearchError("Couldn't search — check your connection and try again.");
-      }
+      showRequestError(e.detail.elt, 'check your connection and try again.');
+    });
+    document.body.addEventListener('htmx:afterRequest', function (e) {
+      if (e.detail.successful) clearRequestError(e.detail.elt);
     });
 
     function refreshJobs() {

@@ -224,13 +224,41 @@ claude mcp add --transport http gobrain https://your-backend.up.railway.app/mcp
 
 *Claude Desktop / web* — **Settings → Connectors → Add custom connector**, paste `https://your-backend.up.railway.app/mcp`, and complete the browser consent.
 
+*Cursor* — **Settings → Tools & MCP → New MCP Server** (or edit `~/.cursor/mcp.json` for all projects / `.cursor/mcp.json` for one), then add:
+```json
+{
+  "mcpServers": {
+    "gobrain": { "url": "https://your-backend.up.railway.app/mcp" }
+  }
+}
+```
+Cursor opens the browser to authorize on first use.
+
+*Codex CLI:*
+```bash
+codex mcp add gobrain --url https://your-backend.up.railway.app/mcp
+codex mcp login gobrain   # opens the browser to authorize
+```
+
+*Pi:*
+```bash
+/mcp add gobrain https://your-backend.up.railway.app/mcp
+```
+(or add it to `~/.pi/agent/mcp.json` under `mcpServers`). Pi authorizes over the browser on first use.
+
 The paste-a-token step needs a token from the web UI (**Invite a teammate**) or the admin API — the same tokens everything else uses. A whole team onboards by each pasting their own token once; notes they write are attributed to that token's label.
 
 > **Prefer a header instead of the browser flow?** The same `/mcp` endpoint also accepts a plain minted token directly, no OAuth round-trip:
 > ```bash
+> # Claude Code
 > claude mcp add --transport http gobrain https://your-backend.up.railway.app/mcp \
 >   --header "Authorization: Bearer <a token you mint>"
+>
+> # Codex CLI — name an env var that holds the token
+> codex mcp add gobrain --url https://your-backend.up.railway.app/mcp \
+>   --bearer-token-env-var GOBRAIN_TOKEN
 > ```
+> For Cursor / Pi, add a `headers` block alongside the `url`, e.g. `"headers": { "Authorization": "Bearer <a token you mint>" }`.
 
 ### Local (stdio)
 
